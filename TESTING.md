@@ -18,7 +18,7 @@ npm test -- --coverage
 
 ## Test Structure
 
-Tests are located in `__tests__/` directory:
+Tests are located in `tests/` directory:
 
 - `content.test.js` - Tests for content script functions (sprint manipulation, filtering)
 - `popup.test.js` - Tests for popup script functions (filter saving, button state management)
@@ -99,7 +99,7 @@ These tests specifically verify fixes for reported issues:
 ## Notes for Chrome Store Submission
 
 Remember to exclude from `archive.zip`:
-- `__tests__/` directory
+- `tests/` directory
 - `package.json`
 - `node_modules/` (if added)
 - `.gitignore`
