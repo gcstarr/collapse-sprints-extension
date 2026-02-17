@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="popup-container">
+    <h2>Sprint Collapser</h2>
+    <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
+    <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
+
+    <div class="divider"></div>
+
+    <h3>Filter Sprints</h3>
+    <div class="filter-input-wrapper">
+      <input type="text" id="filterInput" class="filter-input" placeholder="Enter sprint name filter...">
+      <button id="saveFilterBtn" class="save-filter-btn" title="Save filter"></button>
+    </div>
+    <div id="savedFilters" class="saved-filters"></div>
+    <button id="filterBtn" class="action-button filter">Hide Non-Matching</button>
+    <button id="showAllBtn" class="action-button secondary">Show All Sprints</button>
+
+    <div id="status" class="status-message"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

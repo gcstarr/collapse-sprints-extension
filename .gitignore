@@ -1,0 +1,22 @@
+# Node modules
+node_modules/
+package-lock.json
+yarn.lock
+
+# Test coverage
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+archive.zip
