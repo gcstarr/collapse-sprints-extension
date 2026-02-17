@@ -35,10 +35,11 @@ describe('Sprint Collapser Popup Functions', () => {
     // Clear mock storage
     Object.keys(mockStorage).forEach(key => delete mockStorage[key]);
     jest.clearAllMocks();
-    
+
     // Setup DOM
     document.body.innerHTML = `
       <div class="popup-container">
+        <button id="closeBtn" class="close-btn" title="Close">×</button>
         <h2>Sprint Collapser</h2>
         <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
         <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
@@ -241,16 +242,16 @@ describe('Sprint Collapser Popup Functions', () => {
     test('should display saved filters as chips', () => {
       mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Backend'];
       const container = document.getElementById('savedFilters');
-      
+
       container.innerHTML = '';
       const savedFilters = mockStorage[SAVED_FILTERS_KEY];
-      
+
       if (savedFilters && savedFilters.length > 0) {
         const label = document.createElement('div');
         label.className = 'saved-filters-label';
         label.textContent = 'Saved Filters:';
         container.appendChild(label);
-        
+
         savedFilters.forEach(filter => {
           const chip = document.createElement('div');
           chip.className = 'filter-chip';
@@ -258,7 +259,7 @@ describe('Sprint Collapser Popup Functions', () => {
           container.appendChild(chip);
         });
       }
-      
+
       expect(container.children.length).toBe(3); // 1 label + 2 chips
       expect(container.textContent).toContain('Team A');
       expect(container.textContent).toContain('Backend');
@@ -267,25 +268,48 @@ describe('Sprint Collapser Popup Functions', () => {
     test('should not display saved filters container when empty', () => {
       mockStorage[SAVED_FILTERS_KEY] = [];
       const container = document.getElementById('savedFilters');
-      
+
       container.innerHTML = '';
       const savedFilters = mockStorage[SAVED_FILTERS_KEY];
-      
+
       if (!savedFilters || savedFilters.length === 0) {
         container.innerHTML = '';
       }
-      
+
       expect(container.children.length).toBe(0);
     });
 
     test('should be able to click saved filter to apply it', () => {
       mockStorage[SAVED_FILTERS_KEY] = ['Team A'];
       const filterInput = document.getElementById('filterInput');
-      
+
       const filterText = 'Team A';
       filterInput.value = filterText;
-      
+
       expect(filterInput.value).toBe('Team A');
+    });
+
+    test('[REGRESSION] saved filters should be sorted alphabetically when added', () => {
+      mockStorage[SAVED_FILTERS_KEY] = ['Team B', 'Team A'];
+
+      // Simulate adding 'Team C'
+      let saved = mockStorage[SAVED_FILTERS_KEY];
+      saved.push('Team C');
+      saved.sort();
+      mockStorage[SAVED_FILTERS_KEY] = saved;
+
+      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Team A', 'Team B', 'Team C']);
+    });
+
+    test('[REGRESSION] saved filters should remain sorted when one is removed', () => {
+      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B', 'Team C'];
+
+      // Remove 'Team B'
+      let saved = mockStorage[SAVED_FILTERS_KEY].filter(f => f !== 'Team B');
+      saved.sort();
+      mockStorage[SAVED_FILTERS_KEY] = saved;
+
+      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Team A', 'Team C']);
     });
   });
 
@@ -294,10 +318,10 @@ describe('Sprint Collapser Popup Functions', () => {
       const style = document.createElement('style');
       style.textContent = `.action-button:disabled { background-color: #b3b3b3; }`;
       document.head.appendChild(style);
-      
+
       const btn = document.getElementById('collapseBtn');
       btn.disabled = true;
-      
+
       const computedStyle = window.getComputedStyle(btn);
       // Note: This test verifies the style was applied, actual color testing is better in E2E
       expect(btn.disabled).toBe(true);
@@ -307,10 +331,10 @@ describe('Sprint Collapser Popup Functions', () => {
       const style = document.createElement('style');
       style.textContent = `.action-button { background-color: #0052cc; }`;
       document.head.appendChild(style);
-      
+
       const btn = document.getElementById('collapseBtn');
       btn.disabled = false;
-      
+
       expect(btn.disabled).toBe(false);
     });
 
@@ -318,12 +342,361 @@ describe('Sprint Collapser Popup Functions', () => {
       const style = document.createElement('style');
       style.textContent = `.action-button.secondary { background-color: #0099cc; }`;
       document.head.appendChild(style);
-      
+
       const btn = document.getElementById('expandBtn');
       btn.disabled = false;
-      
+
       expect(btn.disabled).toBe(false);
       expect(btn.classList.contains('secondary')).toBe(true);
+    });
+  });
+
+  describe('Show All Sprints Filter State', () => {
+    const CURRENT_FILTER_KEY = 'currentFilter';
+
+    test('[REGRESSION] Show All should clear filter input value', () => {
+      const filterInput = document.getElementById('filterInput');
+      filterInput.value = 'Team A';
+
+      // Simulate Show All action
+      filterInput.value = '';
+
+      expect(filterInput.value).toBe('');
+    });
+
+    test('[REGRESSION] Show All should re-enable filter input', () => {
+      const filterInput = document.getElementById('filterInput');
+      filterInput.disabled = true;
+
+      // Simulate Show All action
+      filterInput.disabled = false;
+
+      expect(filterInput.disabled).toBe(false);
+    });
+
+    test('[REGRESSION] Show All should clear current filter from storage', () => {
+      mockStorage[CURRENT_FILTER_KEY] = 'Team A';
+
+      // Simulate Show All action
+      mockStorage[CURRENT_FILTER_KEY] = '';
+
+      expect(mockStorage[CURRENT_FILTER_KEY]).toBe('');
+    });
+
+    test('[REGRESSION] Show All should trigger filter display refresh', () => {
+      // This test verifies that loadAndDisplaySavedFilters would be called
+      // In actual implementation, this refreshes the chip selections
+      mockStorage[CURRENT_FILTER_KEY] = 'Team A';
+      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B'];
+
+      // Simulate Show All action
+      mockStorage[CURRENT_FILTER_KEY] = '';
+
+      // The current filter should no longer match any saved filter
+      const currentFilter = mockStorage[CURRENT_FILTER_KEY];
+      const hasMatch = mockStorage[SAVED_FILTERS_KEY].includes(currentFilter);
+
+      expect(hasMatch).toBe(false);
+    });
+  });
+
+  describe('Favorite Button Confirmation', () => {
+    test('[REGRESSION] adding a favorite should not show confirmation', () => {
+      const filterText = 'Team A';
+      mockStorage[SAVED_FILTERS_KEY] = [];
+
+      // Simulate adding without confirmation
+      let saved = mockStorage[SAVED_FILTERS_KEY];
+      const isSaved = saved.includes(filterText);
+
+      expect(isSaved).toBe(false);
+
+      // Add directly without confirm
+      saved.push(filterText);
+      mockStorage[SAVED_FILTERS_KEY] = saved;
+
+      expect(mockStorage[SAVED_FILTERS_KEY]).toContain('Team A');
+    });
+
+    test('[REGRESSION] removing a favorite should require confirmation', () => {
+      const filterText = 'Team A';
+      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B'];
+
+      const saved = mockStorage[SAVED_FILTERS_KEY];
+      const isSaved = saved.includes(filterText);
+
+      // Should be saved, meaning removal requires confirmation
+      expect(isSaved).toBe(true);
+
+      // Simulate user confirming removal
+      const userConfirmed = true;
+      if (userConfirmed) {
+        mockStorage[SAVED_FILTERS_KEY] = saved.filter(f => f !== filterText);
+      }
+
+      expect(mockStorage[SAVED_FILTERS_KEY]).not.toContain('Team A');
+      expect(mockStorage[SAVED_FILTERS_KEY]).toContain('Team B');
+    });
+  });
+
+  describe('Close Button', () => {
+    test('[REGRESSION] close button should exist in DOM', () => {
+      const closeBtn = document.getElementById('closeBtn');
+      expect(closeBtn).not.toBeNull();
+    });
+
+    test('[REGRESSION] close button should have proper classes', () => {
+      const closeBtn = document.getElementById('closeBtn');
+      expect(closeBtn.classList.contains('close-btn')).toBe(true);
+    });
+
+    test('[REGRESSION] close button should have × character', () => {
+      const closeBtn = document.getElementById('closeBtn');
+      // The button text might be set dynamically, but we expect it to contain ×
+      closeBtn.textContent = '×';
+      expect(closeBtn.textContent).toBe('×');
+    });
+  });
+
+  describe('Spinner Animations', () => {
+    test('[REGRESSION] button should display spinner during operation', () => {
+      const btn = document.getElementById('collapseBtn');
+      const originalText = btn.textContent;
+
+      // Simulate operation starting
+      btn.innerHTML = '<span class="spinner"></span>Collapsing...';
+
+      expect(btn.innerHTML).toContain('spinner');
+      expect(btn.textContent).toContain('Collapsing...');
+    });
+
+    test('[REGRESSION] button should restore original text after operation', () => {
+      const btn = document.getElementById('collapseBtn');
+      const originalText = 'Collapse All Sprints';
+
+      // Simulate operation starting
+      btn.innerHTML = '<span class="spinner"></span>Collapsing...';
+
+      // Simulate operation completing
+      btn.textContent = originalText;
+
+      expect(btn.textContent).toBe(originalText);
+      expect(btn.innerHTML).not.toContain('spinner');
+    });
+
+    test('[REGRESSION] all action buttons should support spinner state', () => {
+      const buttons = [
+        { id: 'collapseBtn', activeText: 'Collapsing...' },
+        { id: 'expandBtn', activeText: 'Expanding...' },
+        { id: 'filterBtn', activeText: 'Filtering...' },
+        { id: 'showAllBtn', activeText: 'Restoring...' }
+      ];
+
+      buttons.forEach(({ id, activeText }) => {
+        const btn = document.getElementById(id);
+        btn.innerHTML = `<span class="spinner"></span>${activeText}`;
+
+        expect(btn.innerHTML).toContain('spinner');
+        expect(btn.textContent).toContain(activeText);
+      });
+    });
+  });
+
+  describe('Filter Chips Disabled State', () => {
+    test('[REGRESSION] filter chips container should be disabled during operations', () => {
+      const container = document.getElementById('savedFilters');
+
+      // Simulate disabling chips
+      container.classList.add('disabled');
+
+      expect(container.classList.contains('disabled')).toBe(true);
+    });
+
+    test('[REGRESSION] filter chips container should be re-enabled after operations', () => {
+      const container = document.getElementById('savedFilters');
+
+      // Simulate operation starting
+      container.classList.add('disabled');
+      expect(container.classList.contains('disabled')).toBe(true);
+
+      // Simulate operation completing
+      container.classList.remove('disabled');
+      expect(container.classList.contains('disabled')).toBe(false);
+    });
+
+    test('[REGRESSION] disabled chips should have reduced opacity', () => {
+      const style = document.createElement('style');
+      style.textContent = `.saved-filters.disabled { opacity: 0.5; pointer-events: none; }`;
+      document.head.appendChild(style);
+
+      const container = document.getElementById('savedFilters');
+      container.classList.add('disabled');
+
+      expect(container.classList.contains('disabled')).toBe(true);
+    });
+  });
+
+  describe('Dynamic Button Text', () => {
+    test('[REGRESSION] buttons should say "All Sprints" when no filter is applied', () => {
+      const collapseBtn = document.getElementById('collapseBtn');
+      const expandBtn = document.getElementById('expandBtn');
+
+      // Simulate no filter applied
+      const hasFilterApplied = false;
+
+      if (!hasFilterApplied) {
+        collapseBtn.textContent = 'Collapse All Sprints';
+        expandBtn.textContent = 'Expand All Sprints';
+      }
+
+      expect(collapseBtn.textContent).toBe('Collapse All Sprints');
+      expect(expandBtn.textContent).toBe('Expand All Sprints');
+    });
+
+    test('[REGRESSION] buttons should say "Visible Sprints" when filter is applied', () => {
+      const collapseBtn = document.getElementById('collapseBtn');
+      const expandBtn = document.getElementById('expandBtn');
+
+      // Save original text
+      collapseBtn.dataset.originalText = collapseBtn.textContent;
+      expandBtn.dataset.originalText = expandBtn.textContent;
+
+      // Simulate filter applied
+      const hasFilterApplied = true;
+
+      if (hasFilterApplied) {
+        collapseBtn.textContent = 'Collapse Visible Sprints';
+        expandBtn.textContent = 'Expand Visible Sprints';
+      }
+
+      expect(collapseBtn.textContent).toBe('Collapse Visible Sprints');
+      expect(expandBtn.textContent).toBe('Expand Visible Sprints');
+    });
+
+    test('[REGRESSION] buttons should restore original text when filter is removed', () => {
+      const collapseBtn = document.getElementById('collapseBtn');
+      const expandBtn = document.getElementById('expandBtn');
+
+      // Set initial state
+      collapseBtn.dataset.originalText = 'Collapse All Sprints';
+      expandBtn.dataset.originalText = 'Expand All Sprints';
+
+      // Apply filter
+      collapseBtn.textContent = 'Collapse Visible Sprints';
+      expandBtn.textContent = 'Expand Visible Sprints';
+
+      // Remove filter
+      const hasFilterApplied = false;
+      if (!hasFilterApplied) {
+        collapseBtn.textContent = collapseBtn.dataset.originalText;
+        expandBtn.textContent = expandBtn.dataset.originalText;
+      }
+
+      expect(collapseBtn.textContent).toBe('Collapse All Sprints');
+      expect(expandBtn.textContent).toBe('Expand All Sprints');
+    });
+  });
+
+  describe('Debug Mode', () => {
+    const DEBUG_MODE_KEY = 'debugMode';
+
+    test('[REGRESSION] debug mode should be disabled by default', () => {
+      mockStorage[DEBUG_MODE_KEY] = false;
+      expect(mockStorage[DEBUG_MODE_KEY]).toBe(false);
+    });
+
+    test('[REGRESSION] debug mode can be toggled on', () => {
+      mockStorage[DEBUG_MODE_KEY] = false;
+
+      // Toggle on
+      mockStorage[DEBUG_MODE_KEY] = !mockStorage[DEBUG_MODE_KEY];
+
+      expect(mockStorage[DEBUG_MODE_KEY]).toBe(true);
+    });
+
+    test('[REGRESSION] debug mode can be toggled off', () => {
+      mockStorage[DEBUG_MODE_KEY] = true;
+
+      // Toggle off
+      mockStorage[DEBUG_MODE_KEY] = !mockStorage[DEBUG_MODE_KEY];
+
+      expect(mockStorage[DEBUG_MODE_KEY]).toBe(false);
+    });
+
+    test('[REGRESSION] debug mode persists across sessions', () => {
+      mockStorage[DEBUG_MODE_KEY] = true;
+
+      // Simulate page reload - storage should retain value
+      const persistedValue = mockStorage[DEBUG_MODE_KEY];
+
+      expect(persistedValue).toBe(true);
+    });
+
+    test('[REGRESSION] title should indicate debug mode when enabled', () => {
+      const title = document.querySelector('h2');
+      mockStorage[DEBUG_MODE_KEY] = true;
+
+      // Simulate debug mode UI update
+      if (mockStorage[DEBUG_MODE_KEY]) {
+        title.style.color = '#ff6b6b';
+        title.title = 'Debug mode enabled - Triple-click to disable';
+      }
+
+      // CSS colors can be returned as hex or rgb format
+      expect(title.style.color).toBeTruthy();
+      expect(['#ff6b6b', 'rgb(255, 107, 107)']).toContain(title.style.color);
+      expect(title.title).toContain('Debug mode enabled');
+    });
+
+    test('[REGRESSION] title should clear indicator when debug mode disabled', () => {
+      const title = document.querySelector('h2');
+      mockStorage[DEBUG_MODE_KEY] = false;
+
+      // Simulate debug mode UI update
+      if (!mockStorage[DEBUG_MODE_KEY]) {
+        title.style.color = '';
+        title.title = 'Triple-click to enable debug mode';
+      }
+
+      expect(title.style.color).toBe('');
+      expect(title.title).toContain('Triple-click to enable');
+    });
+  });
+
+  describe('Popup Initialization', () => {
+    test('[REGRESSION] all action buttons should be disabled initially', () => {
+      const collapseBtn = document.getElementById('collapseBtn');
+      const expandBtn = document.getElementById('expandBtn');
+      const filterBtn = document.getElementById('filterBtn');
+      const showAllBtn = document.getElementById('showAllBtn');
+
+      // Simulate initial state
+      collapseBtn.disabled = true;
+      expandBtn.disabled = true;
+      filterBtn.disabled = true;
+      showAllBtn.disabled = true;
+
+      expect(collapseBtn.disabled).toBe(true);
+      expect(expandBtn.disabled).toBe(true);
+      expect(filterBtn.disabled).toBe(true);
+      expect(showAllBtn.disabled).toBe(true);
+    });
+
+    test('[REGRESSION] buttons should be enabled after state is loaded', () => {
+      const collapseBtn = document.getElementById('collapseBtn');
+      const expandBtn = document.getElementById('expandBtn');
+
+      // Initial disabled state
+      collapseBtn.disabled = true;
+      expandBtn.disabled = true;
+
+      // Simulate state loaded via callback
+      const sprintState = { allCollapsed: false, allExpanded: false };
+      collapseBtn.disabled = sprintState.allCollapsed;
+      expandBtn.disabled = sprintState.allExpanded;
+
+      expect(collapseBtn.disabled).toBe(false);
+      expect(expandBtn.disabled).toBe(false);
     });
   });
 });

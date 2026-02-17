@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sprint Collapser",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Collapse, expand, and filter sprints when multiple teams share a Jira board",
   "permissions": [
     "activeTab",
@@ -10,7 +10,9 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.atlassian.net/jira/software/*/projects/*/boards/*/backlog*"
+        "https://*.atlassian.net/jira/software/c/projects/*/boards/*/backlog*",
+        "https://*.atlassian.net/jira/software/*/projects/*/boards/*/backlog*",
+        "https://*.atlassian.net/jira/software/*/backlog*"
       ],
       "js": ["content.js"]
     }

@@ -96,24 +96,29 @@ function expandAllSprints() {
 
 function getSprintState() {
   const buttons = findSprintToggleButtons();
-  
+
   if (buttons.length === 0) {
     return { allCollapsed: false, allExpanded: false, anyFiltered: false };
   }
-  
+
   let collapsedCount = 0;
   let expandedCount = 0;
-  
+  let unknownCount = 0;
+
   buttons.forEach((button) => {
-    if (button.getAttribute('aria-expanded') === 'false') {
+    const ariaExpanded = button.getAttribute('aria-expanded');
+    if (ariaExpanded === 'false') {
       collapsedCount++;
-    } else {
+    } else if (ariaExpanded === 'true') {
       expandedCount++;
+    } else {
+      // Attribute is null or has unexpected value
+      unknownCount++;
     }
   });
-  
+
   const anyFiltered = document.querySelector('[data-filtered-hidden="true"]') !== null;
-  
+
   return {
     allCollapsed: collapsedCount === buttons.length && expandedCount === 0,
     allExpanded: expandedCount === buttons.length && collapsedCount === 0,
@@ -331,7 +336,7 @@ describe('Sprint Collapser Content Script', () => {
       createSprintButton('sprint-2', 'false', false);
 
       const state = getSprintState();
-      
+
       // All collapsed: Collapse button should be disabled, Expand should be enabled
       expect(state.allCollapsed).toBe(true);
       expect(state.allExpanded).toBe(false);
@@ -343,11 +348,159 @@ describe('Sprint Collapser Content Script', () => {
       createSprintButton('sprint-2', 'true', true);  // Only filtered sprint, expanded
 
       const state = getSprintState();
-      
+
       // All visible sprints are expanded, but we have filtered sprints
       expect(state.anyFiltered).toBe(true);
       // Even though aria-expanded is true, filtered sprints shouldn't count
       expect(findSprintToggleButtons()).toHaveLength(2);
+    });
+  });
+
+  describe('Sprint State Detection with Unknown Values', () => {
+    // Mock DOM setup that allows null aria-expanded
+    function createSprintButtonWithAriaValue(id, ariaValue, isFiltered = false) {
+      const outer = document.createElement('div');
+      outer.setAttribute('data-filtered-hidden', isFiltered ? 'true' : 'false');
+
+      const inner = document.createElement('div');
+      inner.setAttribute('data-drop-target-for-element', 'true');
+
+      const button = document.createElement('div');
+      button.setAttribute('role', 'button');
+      button.setAttribute('data-testid', 'software-backlog.card-list.left-side');
+      if (ariaValue !== null) {
+        button.setAttribute('aria-expanded', ariaValue);
+      }
+      button.id = id;
+
+      const sprintName = document.createElement('h2');
+      sprintName.textContent = id.replace('sprint-', 'Sprint ');
+
+      inner.appendChild(button);
+      inner.appendChild(sprintName);
+      outer.appendChild(inner);
+      document.body.appendChild(outer);
+
+      return { outer, button };
+    }
+
+    test('[REGRESSION] should correctly count sprints with explicit true aria-expanded', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', 'true');
+
+      const state = getSprintState();
+
+      expect(state.allExpanded).toBe(true);
+      expect(state.allCollapsed).toBe(false);
+    });
+
+    test('[REGRESSION] should correctly count sprints with explicit false aria-expanded', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'false');
+      createSprintButtonWithAriaValue('sprint-2', 'false');
+
+      const state = getSprintState();
+
+      expect(state.allCollapsed).toBe(true);
+      expect(state.allExpanded).toBe(false);
+    });
+
+    test('[REGRESSION] should not count null aria-expanded as expanded', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', null);  // No aria-expanded attribute
+
+      const state = getSprintState();
+
+      // Should not be "all expanded" because one has null
+      expect(state.allExpanded).toBe(false);
+      expect(state.allCollapsed).toBe(false);
+    });
+
+    test('[REGRESSION] should not count null aria-expanded as collapsed', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'false');
+      createSprintButtonWithAriaValue('sprint-2', null);  // No aria-expanded attribute
+
+      const state = getSprintState();
+
+      // Should not be "all collapsed" because one has null
+      expect(state.allCollapsed).toBe(false);
+      expect(state.allExpanded).toBe(false);
+    });
+
+    test('[REGRESSION] should handle mixed states with unknown values', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', 'false');
+      createSprintButtonWithAriaValue('sprint-3', null);
+
+      const state = getSprintState();
+
+      expect(state.allExpanded).toBe(false);
+      expect(state.allCollapsed).toBe(false);
+    });
+
+    test('[REGRESSION] should handle all unknown values gracefully', () => {
+      createSprintButtonWithAriaValue('sprint-1', null);
+      createSprintButtonWithAriaValue('sprint-2', null);
+
+      const state = getSprintState();
+
+      // None are explicitly expanded or collapsed
+      expect(state.allExpanded).toBe(false);
+      expect(state.allCollapsed).toBe(false);
+    });
+
+    test('[REGRESSION] should handle unexpected aria-expanded values', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', 'maybe');  // Invalid value
+
+      const state = getSprintState();
+
+      // Should not count 'maybe' as either expanded or collapsed
+      expect(state.allExpanded).toBe(false);
+      expect(state.allCollapsed).toBe(false);
+    });
+
+    test('[REGRESSION] Expand All button should be disabled only when ALL sprints are explicitly expanded', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', 'true');
+      createSprintButtonWithAriaValue('sprint-3', 'true');
+
+      const state = getSprintState();
+
+      // All explicitly expanded - button should be disabled
+      expect(state.allExpanded).toBe(true);
+    });
+
+    test('[REGRESSION] Expand All button should NOT be disabled when some sprints have unknown state', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'true');
+      createSprintButtonWithAriaValue('sprint-2', 'true');
+      createSprintButtonWithAriaValue('sprint-3', null);  // Unknown state
+
+      const state = getSprintState();
+
+      // Not all explicitly expanded - button should be enabled
+      expect(state.allExpanded).toBe(false);
+    });
+
+    test('[REGRESSION] Collapse All button should be disabled only when ALL sprints are explicitly collapsed', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'false');
+      createSprintButtonWithAriaValue('sprint-2', 'false');
+      createSprintButtonWithAriaValue('sprint-3', 'false');
+
+      const state = getSprintState();
+
+      // All explicitly collapsed - button should be disabled
+      expect(state.allCollapsed).toBe(true);
+    });
+
+    test('[REGRESSION] Collapse All button should NOT be disabled when some sprints have unknown state', () => {
+      createSprintButtonWithAriaValue('sprint-1', 'false');
+      createSprintButtonWithAriaValue('sprint-2', 'false');
+      createSprintButtonWithAriaValue('sprint-3', null);  // Unknown state
+
+      const state = getSprintState();
+
+      // Not all explicitly collapsed - button should be enabled
+      expect(state.allCollapsed).toBe(false);
     });
   });
 });

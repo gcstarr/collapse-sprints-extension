@@ -9,6 +9,30 @@ body {
 .popup-container {
   padding: 16px;
   background: white;
+  position: relative;
+}
+
+.close-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #626f86;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  color: #172b4d;
 }
 
 h2 {
@@ -73,6 +97,24 @@ h3 {
 .action-button:disabled {
   background-color: #b3b3b3;
   cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .action-button.secondary {
@@ -149,6 +191,11 @@ h3 {
   min-height: 0;
 }
 
+.saved-filters.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
 .saved-filters-label {
   font-size: 12px;
   color: #626f86;
@@ -172,6 +219,15 @@ h3 {
 
 .filter-chip:hover {
   background-color: #c9cace;
+}
+
+.filter-chip.selected {
+  background-color: #4bce97;
+  color: #ffffff;
+}
+
+.filter-chip.selected:hover {
+  background-color: #2d9670;
 }
 
 .filter-chip-remove {
