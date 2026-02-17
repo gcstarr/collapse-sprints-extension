@@ -56,6 +56,18 @@ A Chrome extension that adds sprint management tools for Jira Cloud board backlo
 4. Click saved filter chips below to apply them instantly
 5. Click the × on a chip to remove it
 
+### Debug Mode
+
+For troubleshooting or development, you can enable verbose console logging:
+
+1. Open the extension popup
+2. **Triple-click** the "Sprint Collapser" title at the top
+3. The title will turn red when debug mode is enabled
+4. Check your browser console (F12) for detailed logs
+5. Triple-click the title again to disable debug mode
+
+**Note:** Debug mode persists across sessions and is stored locally. All logging is disabled by default in production use.
+
 ## Permissions
 
 - **Active Tab**: Required to interact with the current Jira board
