@@ -1,11 +1,11 @@
-# Collapse All Sprints - Chrome Extension
+# Sprint Collapser - Chrome Extension
 
-A Chrome extension that adds "Collapse All" and "Expand All" buttons for Jira sprint backlogs.
+A Chrome extension that adds sprint management tools for Jira Cloud board backlogs. Collapse, expand, and filter sprints with one click when multiple teams share a board.
 
 ## Installation Instructions
 
 1. **Download the extension files**
-   - Get the extension folder (all files should be together in one folder)
+   - Clone or download this repository
 
 2. **Open Chrome Extensions page**
    - In Chrome, go to `chrome://extensions/`
@@ -16,33 +16,85 @@ A Chrome extension that adds "Collapse All" and "Expand All" buttons for Jira sp
 
 4. **Load the extension**
    - Click "Load unpacked" button
-   - Select the folder containing the extension files
+   - Select the `collapse-sprints-extension` folder
    - The extension should now appear in your extensions list
 
 5. **Use the extension**
-   - Navigate to any Jira backlog page (e.g., `https://yourcompany.atlassian.net/jira/software/.../backlog`)
-   - Click the extension icon in your Chrome toolbar
-   - Click "Collapse All Sprints" or "Expand All Sprints"
+   - Navigate to a Jira Cloud board backlog page (e.g., `https://yourcompany.atlassian.net/jira/software/.../backlog`)
+   - Click the extension icon in your Chrome toolbar to open the popup
+   - Use any of the available controls
 
 ## Features
 
-- ✅ Collapse all sprints with one click
-- ✅ Expand all sprints with one click
-- ✅ Fast performance (processes all sprints instantly)
-- ✅ Clean, simple interface
+### Sprint Controls
+- ✅ **Collapse All Sprints** - Collapse all expanded sprints at once
+- ✅ **Expand All Sprints** - Expand all collapsed sprints at once
+
+### Filter Sprints
+- ✅ **Filter by name** - Hide sprints that don't match your search
+- ✅ **Show All Sprints** - Restore hidden sprints
+- ✅ **Save Favorite Filters** - Click the star (☆) to save frequently-used filters (up to 10)
+- ✅ **One-click apply** - Click saved filters to instantly apply them
+- ✅ **Local storage** - Saved filters persist across browser sessions
+
+## How to Use
+
+### Collapse/Expand Sprints
+1. Click the extension icon
+2. Click "Collapse All Sprints" or "Expand All Sprints"
+3. Only visible (unfiltered) sprints are affected
+
+### Filter Sprints
+1. Type a sprint name in the filter input (e.g., "Team A", "Backend")
+2. Click "Hide Non-Matching" to hide sprints that don't match
+3. Click "Show All Sprints" to restore hidden sprints
+
+### Save Filters
+1. Type a sprint name in the filter input
+2. Click the star (☆) button to save it
+3. The star turns filled (★) when saved
+4. Click saved filter chips below to apply them instantly
+5. Click the × on a chip to remove it
+
+## Permissions
+
+- **Active Tab**: Required to interact with the current Jira board
+- **Storage**: Used to save your favorite filters locally (no data sent to servers)
+
+## Development
+
+### Running Tests
+```bash
+# Install dependencies (first time only)
+npm install
+
+# Run all tests
+npm test
+
+# Run tests in watch mode
+npm test -- --watch
+
+# Run tests with coverage
+npm test -- --coverage
+```
+
+See [TESTING.md](TESTING.md) for detailed testing information.
+
+### Building for Chrome Store
+```bash
+# Create production archive
+npm run build
+
+# Output: archive.zip (ready to submit)
+```
 
 ## Troubleshooting
 
-- **Extension icon doesn't appear**: Make sure you're on a Jira backlog page
-- **Nothing happens when clicking buttons**: Check the browser console (F12) for any error messages
-- **Extension doesn't load**: Ensure all files are in the same folder and you selected the correct folder
+- **"This extension only works on Jira Cloud board backlog pages"**: Navigate to a Jira board's backlog view. The URL should contain `/backlog`
+- **Extension icon doesn't appear**: Reload the page or check you're on a supported Jira page
+- **Buttons are greyed out**: Sprints are already in that state (all collapsed/expanded/filtered)
+- **Nothing happens when clicking buttons**: Check your browser console (F12) for errors
 
-## Files Included
+## License
 
-- `manifest.json` - Extension configuration
-- `popup.html` - Extension popup interface
-- `popup.js` - Popup functionality
-- `content.js` - Main extension logic
-- `styles.css` - Popup styling
-- `icons/` - Extension icons
-- `README.md` - This file
+This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.

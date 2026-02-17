@@ -2,13 +2,13 @@
   "name": "collapse-sprints-extension",
   "version": "1.0.0",
   "description": "Collapse, expand, and filter sprints when multiple teams share a Jira board",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": "",
   "type": "commonjs",
   "main": "content.js",
   "scripts": {
     "test": "jest",
-    "build": "zip -r archive.zip manifest.json content.js popup.html popup.js styles.css icons/ README.md -x '*.DS_Store' '*/tests/*' '*/.git/*' '*/node_modules/*'"
+    "build": "zip -r archive.zip manifest.json content.js popup.html popup.js styles.css icons/ README.md LICENSE -x '*.DS_Store' '*/tests/*' '*/.git/*' '*/node_modules/*'"
   },
   "devDependencies": {
     "jest": "^29.7.0",
