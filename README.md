@@ -3,6 +3,9 @@
 A Chrome extension that adds sprint management tools for Jira Cloud board backlogs. Collapse, expand, and filter sprints with one click when multiple teams share a board.
 
 ## Installation Instructions
+The extension is planned to be released on the Chrome Web Store, where it is currently pending review.
+
+### Manual Installation
 
 1. **Download the extension files**
    - Clone or download this repository
