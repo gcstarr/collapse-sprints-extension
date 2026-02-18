@@ -9,6 +9,7 @@ coverage/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 
@@ -19,4 +20,4 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
-archive.zip
+SprintCollapser_v*.zip
