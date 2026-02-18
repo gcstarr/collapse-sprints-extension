@@ -93,11 +93,13 @@ npm test -- --coverage
 See [TESTING.md](TESTING.md) for detailed testing information.
 
 ### Building for Chrome Store
+The version number in [manifest.json](manifest.json) is the source of truth for version. [package.json](package.json)'s version property is updated to match when the `build` script is run.
+
 ```bash
 # Create production archive
 npm run build
 
-# Output: archive.zip (ready to submit)
+# Output: SprintCollapser_vX.Y.Z.zip (ready to submit)
 ```
 
 ## Troubleshooting
