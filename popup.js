@@ -516,8 +516,21 @@ async function updateActionButtonStates(callback) {
   );
 }
 
+// Check if URL matches supported page patterns
+function isUrlSupported(url) {
+  if (!url) return false;
+
+  const patterns = [
+    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
+    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
+    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/backlog/
+  ];
+
+  return patterns.some(pattern => pattern.test(url));
+}
+
 // Check if we're on a supported page when popup loads
-async function checkSupportedPage(retries = 3, delay = 100) {
+async function checkSupportedPage(retries = 5, delay = 200) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
   // Disable action buttons initially until state is loaded
@@ -526,8 +539,26 @@ async function checkSupportedPage(retries = 3, delay = 100) {
   document.getElementById('filterBtn').disabled = true;
   document.getElementById('showAllBtn').disabled = true;
 
+  // First check if the URL matches supported patterns
+  const urlSupported = isUrlSupported(tab.url);
+
+  if (!urlSupported) {
+    // URL doesn't match - show error immediately without retrying
+    debugLog('URL not supported:', tab.url);
+    disableAllControls(true);
+    const statusDiv = document.getElementById('status');
+    statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
+    statusDiv.className = 'status-message error';
+    statusDiv.style.marginTop = '16px';
+    return;
+  }
+
+  // URL is supported, so content script should be present
+  // Try to reach it with retries (handles timing issues and SPA navigation)
+  debugLog('URL is supported, attempting to reach content script');
+
   const attemptCheck = (retriesLeft) => {
-    debugLog(`Attempting to reach content script (${3 - retriesLeft + 1}/3)`);
+    debugLog(`Attempting to reach content script (${5 - retriesLeft + 1}/5)`);
 
     // Try to send a test message to see if content script is active
     chrome.tabs.sendMessage(
@@ -542,11 +573,11 @@ async function checkSupportedPage(retries = 3, delay = 100) {
             debugLog(`Retrying in ${delay}ms...`);
             setTimeout(() => attemptCheck(retriesLeft - 1), delay);
           } else {
-            // Out of retries, show error
-            debugLog('Max retries reached, showing error');
+            // Out of retries, show error with more helpful message
+            debugLog('Max retries reached, content script not responding');
             disableAllControls(true);
             const statusDiv = document.getElementById('status');
-            statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
+            statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
             statusDiv.className = 'status-message error';
             statusDiv.style.marginTop = '16px';
           }
