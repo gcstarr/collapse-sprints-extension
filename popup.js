@@ -201,6 +201,7 @@ function updateSaveButtonState() {
 
   if (!currentFilter) {
     saveBtn.style.display = 'none';
+    saveBtn.classList.remove('pulsing');
     return;
   }
 
@@ -209,9 +210,11 @@ function updateSaveButtonState() {
   const isSaved = cachedSavedFilters.includes(currentFilter);
   if (isSaved) {
     saveBtn.classList.add('saved');
+    saveBtn.classList.remove('pulsing');
     saveBtn.textContent = '★';
   } else {
     saveBtn.classList.remove('saved');
+    saveBtn.classList.add('pulsing');
     saveBtn.textContent = '☆';
   }
 }
