@@ -3,6 +3,15 @@
  * Tests core sprint manipulation and state detection functions
  */
 
+const {
+  findSprintToggleButtons,
+  collapseAllSprints,
+  expandAllSprints,
+  filterSprints,
+  showAllSprints,
+  getSprintState,
+} = require('../content.js');
+
 // Mock DOM helper for testing
 function createSprintButton(id, ariaExpanded = null, isFiltered = false) {
   const outer = document.createElement('div');
@@ -15,7 +24,7 @@ function createSprintButton(id, ariaExpanded = null, isFiltered = false) {
   button.setAttribute('role', 'button');
   button.setAttribute('data-testid', 'software-backlog.card-list.left-side');
   if (ariaExpanded !== null) {
-    button.setAttribute('aria-expanded', ariaExpanded);
+    button.setAttribute('aria-expanded', String(ariaExpanded));
   }
   button.id = id;
 
@@ -30,103 +39,26 @@ function createSprintButton(id, ariaExpanded = null, isFiltered = false) {
   return outer;
 }
 
-// Functions extracted from content.js for testing
-function findSprintToggleButtons() {
-  const toggleButtons = document.querySelectorAll(
-    'div[role="button"][data-testid="software-backlog.card-list.left-side"]'
-  );
-  return Array.from(toggleButtons);
-}
-
-function collapseAllSprints() {
-  const buttons = findSprintToggleButtons();
-  
-  if (buttons.length === 0) {
-    return { success: false, message: 'No sprints found' };
-  }
-  
-  let collapsedCount = 0;
-  buttons.forEach((button) => {
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    const isExpanded = button.getAttribute('aria-expanded') === 'true';
-
-    if (isExpanded) {
-      button.setAttribute('aria-expanded', 'false');
-      collapsedCount++;
-    }
-  });
-
-  return { success: true, message: `Collapsed ${collapsedCount} sprint${collapsedCount !== 1 ? 's' : ''}` };
-}
-
-function expandAllSprints() {
-  const buttons = findSprintToggleButtons();
-
-  if (buttons.length === 0) {
-    return { success: false, message: 'No sprints found' };
-  }
-
-  let expandedCount = 0;
-  buttons.forEach((button) => {
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    const isCollapsed = button.getAttribute('aria-expanded') === 'false';
-
-    if (isCollapsed) {
-      button.setAttribute('aria-expanded', 'true');
-      expandedCount++;
-    }
-  });
-
-  return { success: true, message: `Expanded ${expandedCount} sprint${expandedCount !== 1 ? 's' : ''}` };
-}
-
-function getSprintState() {
-  const buttons = findSprintToggleButtons();
-
-  if (buttons.length === 0) {
-    return { allCollapsed: false, allExpanded: false, anyFiltered: false };
-  }
-
-  let collapsedCount = 0;
-  let expandedCount = 0;
-  buttons.forEach((button) => {
-    const ariaExpanded = button.getAttribute('aria-expanded');
-    if (ariaExpanded === 'false') {
-      collapsedCount++;
-    } else if (ariaExpanded === 'true') {
-      expandedCount++;
-    }
-  });
-
-  const anyFiltered = document.querySelector('[data-filtered-hidden="true"]') !== null;
-
-  return {
-    allCollapsed: collapsedCount === buttons.length && expandedCount === 0,
-    allExpanded: expandedCount === buttons.length && collapsedCount === 0,
-    anyFiltered: anyFiltered
-  };
-}
-
-// Test suite
 describe('Sprint Collapser Content Script', () => {
-  
+
   beforeEach(() => {
     document.body.innerHTML = '';
+    jest.useFakeTimers();
+    // Simulate Jira toggling aria-expanded on click
+    jest.spyOn(HTMLElement.prototype, 'click').mockImplementation(function() {
+      const current = this.getAttribute('aria-expanded');
+      if (current === 'true') this.setAttribute('aria-expanded', 'false');
+      else if (current === 'false') this.setAttribute('aria-expanded', 'true');
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   describe('findSprintToggleButtons', () => {
     test('should find all sprint toggle buttons', () => {
-
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2', false);
       createSprintButton('sprint-3', true);
@@ -142,111 +74,194 @@ describe('Sprint Collapser Content Script', () => {
   });
 
   describe('collapseAllSprints', () => {
-    test('should collapse all expanded sprints', () => {
-
+    test('should collapse all expanded sprints', (done) => {
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2', true);
 
-      const result = collapseAllSprints();
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Collapsed 2 sprints');
-      
-      const buttons = findSprintToggleButtons();
-      buttons.forEach(btn => {
-        expect(btn.getAttribute('aria-expanded')).toBe('false');
+      collapseAllSprints((result) => {
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Collapsed 2 sprints');
+
+        const buttons = findSprintToggleButtons();
+        buttons.forEach(btn => {
+          expect(btn.getAttribute('aria-expanded')).toBe('false');
+        });
+        done();
       });
+
+      jest.runAllTimers();
     });
 
-    test('should return disabled if all sprints already collapsed', () => {
-
+    test('should return count of 0 if all sprints already collapsed', (done) => {
       createSprintButton('sprint-1', false);
       createSprintButton('sprint-2', false);
 
-      const result = collapseAllSprints();
-      expect(result.message).toBe('Collapsed 0 sprints');
+      collapseAllSprints((result) => {
+        expect(result.message).toBe('Collapsed 0 sprints');
+        done();
+      });
+
+      jest.runAllTimers();
     });
 
-    test('[REGRESSION] should skip filtered sprints when collapsing', () => {
-
+    test('[REGRESSION] should skip filtered sprints when collapsing', (done) => {
       createSprintButton('sprint-1', true, false);  // visible, expanded
       createSprintButton('sprint-2', true, true);   // filtered/hidden, expanded
 
-      const result = collapseAllSprints();
-      
-      // Only 1 should collapse (the visible one)
-      expect(result.message).toContain('Collapsed 1 sprint');
-      
+      collapseAllSprints((result) => {
+        // Only 1 should collapse (the visible one)
+        expect(result.message).toContain('Collapsed 1 sprint');
+
+        const buttons = findSprintToggleButtons();
+        // Visible sprint should be collapsed
+        expect(buttons[0].getAttribute('aria-expanded')).toBe('false');
+        // Filtered sprint should remain unchanged
+        expect(buttons[1].getAttribute('aria-expanded')).toBe('true');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('should handle no sprints gracefully', (done) => {
+      collapseAllSprints((result) => {
+        expect(result.success).toBe(false);
+        expect(result.message).toBe('No sprints found');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+  });
+
+  describe('expandAllSprints', () => {
+    test('should expand all collapsed sprints', (done) => {
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
+
+      expandAllSprints((result) => {
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Expanded 2 sprints');
+
+        const buttons = findSprintToggleButtons();
+        buttons.forEach(btn => {
+          expect(btn.getAttribute('aria-expanded')).toBe('true');
+        });
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('[REGRESSION] should skip filtered sprints when expanding', (done) => {
+      createSprintButton('sprint-1', false, false);  // visible, collapsed
+      createSprintButton('sprint-2', false, true);   // filtered/hidden, collapsed
+
+      expandAllSprints((result) => {
+        // Only 1 should expand (the visible one)
+        expect(result.message).toContain('Expanded 1 sprint');
+
+        const buttons = findSprintToggleButtons();
+        // Visible sprint should be expanded
+        expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
+        // Filtered sprint should remain collapsed
+        expect(buttons[1].getAttribute('aria-expanded')).toBe('false');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('[REGRESSION] should not clear data-filtered-hidden for filtered sprints', (done) => {
+      createSprintButton('sprint-1', false, false);
+      const filteredSprint = createSprintButton('sprint-2', false, true);
+
+      expandAllSprints(() => {
+        // Filtered sprint should still be marked as filtered
+        expect(filteredSprint.getAttribute('data-filtered-hidden')).toBe('true');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('should return count of 0 if all sprints already expanded', (done) => {
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
+
+      expandAllSprints((result) => {
+        expect(result.message).toBe('Expanded 0 sprints');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('should handle no sprints gracefully', (done) => {
+      expandAllSprints((result) => {
+        expect(result.success).toBe(false);
+        expect(result.message).toBe('No sprints found');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+  });
+
+  describe('filterSprints', () => {
+    test('should hide sprints that do not match the filter', () => {
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+
+      // Sprint names are derived from ids: "Sprint Team-A", "Sprint Team-B"
+      const result = filterSprints('Team-A');
+      expect(result.success).toBe(true);
+
       const buttons = findSprintToggleButtons();
-      // Visible sprint should be collapsed
-      expect(buttons[0].getAttribute('aria-expanded')).toBe('false');
-      // Filtered sprint should remain unchanged
-      expect(buttons[1].getAttribute('aria-expanded')).toBe('true');
+      const outerA = buttons[0].closest('div[data-drop-target-for-element="true"]').parentElement;
+      const outerB = buttons[1].closest('div[data-drop-target-for-element="true"]').parentElement;
+
+      expect(outerA.style.display).toBe('');
+      expect(outerB.style.display).toBe('none');
+      expect(outerB.getAttribute('data-filtered-hidden')).toBe('true');
+    });
+
+    test('should return error for empty filter text', () => {
+      createSprintButton('sprint-1', true);
+
+      const result = filterSprints('');
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('No filter text provided');
     });
 
     test('should handle no sprints gracefully', () => {
-      const result = collapseAllSprints();
+      const result = filterSprints('anything');
       expect(result.success).toBe(false);
       expect(result.message).toBe('No sprints found');
     });
   });
 
-  describe('expandAllSprints', () => {
-    test('should expand all collapsed sprints', () => {
+  describe('showAllSprints', () => {
+    test('should restore hidden sprints', () => {
+      const outer = createSprintButton('sprint-1', true, true);
+      outer.style.display = 'none';
 
-      createSprintButton('sprint-1', false);
-      createSprintButton('sprint-2', false);
-
-      const result = expandAllSprints();
+      const result = showAllSprints();
       expect(result.success).toBe(true);
-      expect(result.message).toBe('Expanded 2 sprints');
-      
-      const buttons = findSprintToggleButtons();
-      buttons.forEach(btn => {
-        expect(btn.getAttribute('aria-expanded')).toBe('true');
-      });
+      expect(outer.style.display).toBe('');
+      // showAllSprints removes the attribute entirely rather than setting it to 'false'
+      expect(outer.getAttribute('data-filtered-hidden')).toBeNull();
     });
 
-    test('[REGRESSION] should skip filtered sprints when expanding', () => {
-
-      createSprintButton('sprint-1', false, false);  // visible, collapsed
-      createSprintButton('sprint-2', false, true);   // filtered/hidden, collapsed
-
-      const result = expandAllSprints();
-      
-      // Only 1 should expand (the visible one)
-      expect(result.message).toContain('Expanded 1 sprint');
-      
-      const buttons = findSprintToggleButtons();
-      // Visible sprint should be expanded
-      expect(buttons[0].getAttribute('aria-expanded')).toBe('true');
-      // Filtered sprint should remain collapsed
-      expect(buttons[1].getAttribute('aria-expanded')).toBe('false');
-    });
-
-    test('[REGRESSION] should not show dividers for filtered sprints', () => {
-
-      createSprintButton('sprint-1', false, false);
-      const filteredSprint = createSprintButton('sprint-2', false, true);
-
-      expandAllSprints();
-
-      // Filtered sprint should still have data-filtered-hidden='true'
-      expect(filteredSprint.getAttribute('data-filtered-hidden')).toBe('true');
-    });
-
-    test('should return disabled if all sprints already expanded', () => {
-
-      createSprintButton('sprint-1', true);
-      createSprintButton('sprint-2', true);
-
-      const result = expandAllSprints();
-      expect(result.message).toBe('Expanded 0 sprints');
+    test('should handle no sprints gracefully', () => {
+      const result = showAllSprints();
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('No sprints found');
     });
   });
 
   describe('getSprintState', () => {
     test('should detect when all sprints are collapsed', () => {
-
       createSprintButton('sprint-1', false);
       createSprintButton('sprint-2', false);
 
@@ -256,7 +271,6 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect when all sprints are expanded', () => {
-
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2', true);
 
@@ -266,7 +280,6 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect mixed sprint states', () => {
-
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2', false);
 
@@ -276,7 +289,6 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect when sprints are filtered', () => {
-
       createSprintButton('sprint-1', true, false);
       createSprintButton('sprint-2', true, true);  // filtered
 
@@ -285,13 +297,11 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should correctly identify allExpanded state with filtered sprints', () => {
-
       createSprintButton('sprint-1', true, false);   // visible, expanded
       createSprintButton('sprint-2', false, true);   // filtered, collapsed
 
       const state = getSprintState();
       // Should be false because not ALL sprints (including filtered ones) are expanded
-      // But only visible sprints should be considered for enable/disable logic
       expect(state.allExpanded).toBe(false);
       expect(state.anyFiltered).toBe(true);
     });
@@ -305,24 +315,24 @@ describe('Sprint Collapser Content Script', () => {
   });
 
   describe('Regression Tests', () => {
-    test('[REGRESSION] hide dividers when filtering with expanded sprints', () => {
-
+    test('[REGRESSION] filtered sprints should not have data-filtered-hidden cleared by expandAllSprints', (done) => {
       createSprintButton('sprint-1', true, false);
-      createSprintButton('sprint-2', true, true);  // This should be hidden with dividers
+      createSprintButton('sprint-2', true, true);  // filtered, expanded
 
-      expandAllSprints();
+      expandAllSprints(() => {
+        const buttons = findSprintToggleButtons();
+        const filteredButton = buttons[1];
+        const outerContainer = filteredButton.closest('div[data-drop-target-for-element="true"]')?.parentElement;
 
-      const buttons = findSprintToggleButtons();
-      const filteredButton = buttons[1];
-      const outerContainer = filteredButton.closest('div[data-drop-target-for-element="true"]')?.parentElement;
+        // Filtered sprint should still be marked filtered (divider should remain hidden)
+        expect(outerContainer?.getAttribute('data-filtered-hidden')).toBe('true');
+        done();
+      });
 
-      // Filtered sprint should not be expanded (divider shouldn't show)
-      expect(filteredButton.getAttribute('aria-expanded')).toBe('true');
-      expect(outerContainer?.getAttribute('data-filtered-hidden')).toBe('true');
+      jest.runAllTimers();
     });
 
     test('[REGRESSION] button state reflects correct disabled status', () => {
-
       createSprintButton('sprint-1', false, false);
       createSprintButton('sprint-2', false, false);
 
@@ -334,7 +344,6 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] all sprints expanded state with only filtered sprints', () => {
-
       createSprintButton('sprint-1', true, true);  // Only filtered sprint, expanded
       createSprintButton('sprint-2', true, true);  // Only filtered sprint, expanded
 
@@ -342,7 +351,6 @@ describe('Sprint Collapser Content Script', () => {
 
       // All visible sprints are expanded, but we have filtered sprints
       expect(state.anyFiltered).toBe(true);
-      // Even though aria-expanded is true, filtered sprints shouldn't count
       expect(findSprintToggleButtons()).toHaveLength(2);
     });
   });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // Read version from manifest.json (source of truth for extension version)
 const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
@@ -36,11 +36,8 @@ const files = [
   'LICENSE'
 ];
 
-// Only need to exclude .DS_Store since icons/ is added recursively
-const command = `zip -r ${filename} ${files.join(' ')} -x '*.DS_Store'`;
-
 try {
-  execSync(command, { stdio: 'inherit' });
+  execFileSync('zip', ['-r', filename, ...files, '-x', '*.DS_Store'], { stdio: 'inherit' });
   console.log(`\n✓ Created ${filename} successfully!`);
 } catch (error) {
   console.error('Build failed:', error.message);
