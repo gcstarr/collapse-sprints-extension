@@ -1,30 +1,42 @@
 // Debug logging helper
 let debugModeEnabled = false;
 
-// Load debug mode from storage
-chrome.storage.local.get('debugMode', (data) => {
-  debugModeEnabled = data.debugMode || false;
-  debugLog('Content script loaded, debug mode:', debugModeEnabled);
-});
-
-// Listen for debug mode changes
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.debugMode) {
-    debugModeEnabled = changes.debugMode.newValue;
-    // Always log debug mode changes (even when disabling) so user can see the change
-    console.log('[Sprint Collapser] Debug mode changed to:', debugModeEnabled);
-  }
-});
-
 function debugLog(...args) {
   if (debugModeEnabled) {
     console.log('[Sprint Collapser]', ...args);
   }
 }
 
+// Guard chrome API calls so this module can be imported in tests
+if (typeof chrome !== 'undefined' && chrome.storage) {
+  // Load debug mode from storage on script initialization
+  chrome.storage.local.get('debugMode', (data) => {
+    debugModeEnabled = data.debugMode || false;
+    debugLog('Content script loaded, debug mode:', debugModeEnabled);
+    debugLog('Content script loaded and ready!');
+  });
+
+  // Listen for debug mode changes
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.debugMode) {
+      debugModeEnabled = changes.debugMode.newValue;
+      // Always log debug mode changes so user can see the change
+      console.log('[Sprint Collapser] Debug mode changed to:', debugModeEnabled);
+    }
+  });
+}
+
+// Helper to check if a sprint is filtered (hidden) by the current filter
+function isSprintFiltered(button) {
+  const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
+  const outerContainer = innerContainer?.parentElement;
+  return outerContainer?.getAttribute('data-filtered-hidden') === 'true';
+}
+
 // Function to find all sprint toggle buttons
 function findSprintToggleButtons() {
   // Look for the specific sprint toggle elements by their data-testid
+  // NOTE: This selector depends on Jira's internal test IDs which can change on updates.
   const toggleButtons = document.querySelectorAll(
     'div[role="button"][data-testid="software-backlog.card-list.left-side"]'
   );
@@ -34,145 +46,104 @@ function findSprintToggleButtons() {
   return Array.from(toggleButtons);
 }
 
-// Function to collapse all sprints
-function collapseAllSprints() {
-  const buttons = findSprintToggleButtons();
-  
-  if (buttons.length === 0) {
-    debugLog('No sprint headers found');
-    return { success: false, message: 'No sprints found' };
-  }
-  
-  // Count how many will be collapsed upfront (before batching starts)
-  let willCollapseCount = 0;
-  buttons.forEach((button) => {
-    // Check if the sprint is filtered (hidden)
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    // Check if the sprint is expanded
-    const isExpanded = button.getAttribute('aria-expanded') === 'true';
-    if (isExpanded) {
-      willCollapseCount++;
-    }
-  });
-
-  // Batch clicks using requestAnimationFrame for better performance
-  let buttonIndex = 0;
-  
-  const processBatch = () => {
-    // Process up to 10 buttons per frame
-    const batchSize = 10;
-    const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
-    
-    for (let i = buttonIndex; i < endIndex; i++) {
-      const button = buttons[i];
-      
-      // Check if the sprint is filtered (hidden)
-      const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-      const outerContainer = innerContainer?.parentElement;
-      if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-        continue;
-      }
-
-      // Check if the sprint is expanded
-      const isExpanded = button.getAttribute('aria-expanded') === 'true';
-
-      if (isExpanded) {
-        button.click();
-      }
-    }
-    
-    buttonIndex = endIndex;
-    
-    // Process more buttons if any remain
-    if (buttonIndex < buttons.length) {
-      requestAnimationFrame(processBatch);
-    }
-  };
-  
-  // Start batching
-  requestAnimationFrame(processBatch);
-
-  debugLog(`Collapsed ${willCollapseCount} sprints`);
-  return { success: true, message: `Collapsed ${willCollapseCount} sprint${willCollapseCount !== 1 ? 's' : ''}` };
-}
-
-// Function to expand all sprints
-function expandAllSprints() {
+// Function to collapse all sprints.
+// onComplete(result) is called asynchronously after all batch clicks have been fired.
+function collapseAllSprints(onComplete) {
   const buttons = findSprintToggleButtons();
 
   if (buttons.length === 0) {
     debugLog('No sprint headers found');
-    return { success: false, message: 'No sprints found' };
+    const result = { success: false, message: 'No sprints found' };
+    if (onComplete) onComplete(result);
+    return;
   }
 
-  // Count how many will be expanded upfront (before batching starts)
-  let willExpandCount = 0;
-  buttons.forEach((button) => {
-    // Check if the sprint is filtered (hidden)
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    // Check if the sprint is collapsed
-    const isCollapsed = button.getAttribute('aria-expanded') === 'false';
-    if (isCollapsed) {
-      willExpandCount++;
-    }
-  });
-
-  // Batch clicks using requestAnimationFrame for better performance
+  let collapsedCount = 0;
   let buttonIndex = 0;
-  
+
   const processBatch = () => {
-    // Process up to 10 buttons per frame
     const batchSize = 10;
     const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
-    
+
     for (let i = buttonIndex; i < endIndex; i++) {
       const button = buttons[i];
-      
-      // Check if the sprint is filtered (hidden)
-      const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-      const outerContainer = innerContainer?.parentElement;
-      if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-        continue;
-      }
+      if (isSprintFiltered(button)) continue;
 
-      // Check if the sprint is collapsed
-      const isCollapsed = button.getAttribute('aria-expanded') === 'false';
-
-      if (isCollapsed) {
+      if (button.getAttribute('aria-expanded') === 'true') {
         button.click();
+        collapsedCount++;
       }
     }
-    
+
     buttonIndex = endIndex;
-    
-    // Process more buttons if any remain
+
     if (buttonIndex < buttons.length) {
       requestAnimationFrame(processBatch);
+    } else {
+      const result = {
+        success: true,
+        message: `Collapsed ${collapsedCount} sprint${collapsedCount !== 1 ? 's' : ''}`
+      };
+      debugLog(`Collapsed ${collapsedCount} sprints`);
+      if (onComplete) onComplete(result);
     }
   };
-  
-  // Start batching
-  requestAnimationFrame(processBatch);
 
-  debugLog(`Expanded ${willExpandCount} sprints`);
-  return { success: true, message: `Expanded ${willExpandCount} sprint${willExpandCount !== 1 ? 's' : ''}` };
+  requestAnimationFrame(processBatch);
 }
 
+// Function to expand all sprints.
+// onComplete(result) is called asynchronously after all batch clicks have been fired.
+function expandAllSprints(onComplete) {
+  const buttons = findSprintToggleButtons();
 
+  if (buttons.length === 0) {
+    debugLog('No sprint headers found');
+    const result = { success: false, message: 'No sprints found' };
+    if (onComplete) onComplete(result);
+    return;
+  }
+
+  let expandedCount = 0;
+  let buttonIndex = 0;
+
+  const processBatch = () => {
+    const batchSize = 10;
+    const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
+
+    for (let i = buttonIndex; i < endIndex; i++) {
+      const button = buttons[i];
+      if (isSprintFiltered(button)) continue;
+
+      if (button.getAttribute('aria-expanded') === 'false') {
+        button.click();
+        expandedCount++;
+      }
+    }
+
+    buttonIndex = endIndex;
+
+    if (buttonIndex < buttons.length) {
+      requestAnimationFrame(processBatch);
+    } else {
+      const result = {
+        success: true,
+        message: `Expanded ${expandedCount} sprint${expandedCount !== 1 ? 's' : ''}`
+      };
+      debugLog(`Expanded ${expandedCount} sprints`);
+      if (onComplete) onComplete(result);
+    }
+  };
+
+  requestAnimationFrame(processBatch);
+}
 
 // Function to filter sprints by name
 function filterSprints(filterText) {
-  // Find all sprint containers (the parent of the toggle button)
+  if (!filterText) {
+    return { success: false, message: 'No filter text provided' };
+  }
+
   const toggleButtons = findSprintToggleButtons();
 
   if (toggleButtons.length === 0) {
@@ -183,27 +154,22 @@ function filterSprints(filterText) {
   let shownCount = 0;
 
   toggleButtons.forEach((button) => {
-    // Find the sprint container (go up to the root sprint element)
     const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
     if (!innerContainer) return;
 
-    // Find the outer container (the one with the testid)
     const outerContainer = innerContainer.parentElement;
     if (!outerContainer) return;
 
-    // Find the sprint name within the container
+    // NOTE: This relies on Jira rendering sprint names in an h2 element.
     const sprintNameElement = innerContainer.querySelector('h2');
     const sprintName = sprintNameElement ? sprintNameElement.textContent : '';
 
-    // Check if sprint name matches the filter (case-insensitive)
     const matches = sprintName.toLowerCase().includes(filterText.toLowerCase());
 
     if (matches) {
-      // Show this sprint
       outerContainer.style.display = '';
       outerContainer.removeAttribute('data-filtered-hidden');
 
-      // Show associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         nextSibling.style.display = '';
@@ -218,11 +184,9 @@ function filterSprints(filterText) {
 
       shownCount++;
     } else {
-      // Hide this sprint
       outerContainer.style.display = 'none';
       outerContainer.setAttribute('data-filtered-hidden', 'true');
 
-      // Hide associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         nextSibling.style.display = 'none';
@@ -267,7 +231,6 @@ function showAllSprints() {
       outerContainer.style.display = '';
       outerContainer.removeAttribute('data-filtered-hidden');
 
-      // Restore associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         if (nextSibling.getAttribute('data-filtered-hidden') === 'true') {
@@ -322,7 +285,6 @@ function getSprintState() {
 
   debugLog(`State counts - Collapsed: ${collapsedCount}, Expanded: ${expandedCount}, Unknown: ${unknownCount}, Total: ${buttons.length}`);
 
-  // Check if any sprints are filtered (hidden)
   const anyFiltered = document.querySelector('[data-filtered-hidden="true"]') !== null;
 
   return {
@@ -332,76 +294,45 @@ function getSprintState() {
   };
 }
 
-// Content script is loaded
-debugLog('Content script loaded and ready!');
-
 // Listen for messages from the popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  try {
-    debugLog('Received message:', request.action);
-    
-    if (request.action === 'collapseAllSprints') {
-      const result = collapseAllSprints();
-      debugLog('Collapse result:', result);
-      sendResponse(result);
-    } else if (request.action === 'expandAllSprints') {
-      const result = expandAllSprints();
-      debugLog('Expand result:', result);
-      sendResponse(result);
-    } else if (request.action === 'filterSprints') {
-      const result = filterSprints(request.filter);
-      debugLog('Filter result:', result);
-      sendResponse(result);
-    } else if (request.action === 'showAllSprints') {
-      const result = showAllSprints();
-      debugLog('Show all result:', result);
-      sendResponse(result);
-    } else if (request.action === 'checkPageSupport') {
-      debugLog('Page support check - responding with supported: true');
-      sendResponse({ supported: true });
-    } else if (request.action === 'getSprintState') {
-      const state = getSprintState();
-      debugLog('Sprint state:', state);
-      sendResponse(state);
-    }
-  } catch (error) {
-    console.error('[Sprint Collapser] Error handling message:', error);
-    sendResponse({ success: false, message: 'Error: ' + error.message });
-  }
-});
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    try {
+      debugLog('Received message:', request.action);
 
-// Add a button to the page (optional: for direct access without popup)
-function addPageButton() {
-  const backlogTab = document.querySelector('[href*="backlog"]');
-  if (backlogTab && !document.getElementById('collapse-all-button')) {
-    const button = document.createElement('button');
-    button.id = 'collapse-all-button';
-    button.textContent = 'Collapse All Sprints';
-    button.style.marginLeft = '10px';
-    button.style.padding = '8px 12px';
-    button.style.backgroundColor = '#0052cc';
-    button.style.color = 'white';
-    button.style.border = 'none';
-    button.style.borderRadius = '4px';
-    button.style.cursor = 'pointer';
-    button.style.fontSize = '14px';
-    
-    button.addEventListener('click', collapseAllSprints);
-    
-    // Try to append to the toolbar area
-    const toolbar = document.querySelector('[role="toolbar"]') || 
-                   document.querySelector('.toolbar') ||
-                   document.querySelector('.aui-buttons');
-    
-    if (toolbar) {
-      toolbar.appendChild(button);
+      if (request.action === 'collapseAllSprints') {
+        collapseAllSprints(sendResponse);
+        return true; // Keep message channel open for async response
+      } else if (request.action === 'expandAllSprints') {
+        expandAllSprints(sendResponse);
+        return true; // Keep message channel open for async response
+      } else if (request.action === 'filterSprints') {
+        sendResponse(filterSprints(request.filter));
+      } else if (request.action === 'showAllSprints') {
+        sendResponse(showAllSprints());
+      } else if (request.action === 'checkPageSupport') {
+        debugLog('Page support check - responding with supported: true');
+        sendResponse({ supported: true });
+      } else if (request.action === 'getSprintState') {
+        const state = getSprintState();
+        debugLog('Sprint state:', state);
+        sendResponse(state);
+      }
+    } catch (error) {
+      console.error('[Sprint Collapser] Error handling message:', error);
+      sendResponse({ success: false, message: 'Error: ' + error.message });
     }
-  }
+  });
 }
 
-// Run when page loads
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', addPageButton);
-} else {
-  addPageButton();
+// Export functions for unit testing (CommonJS)
+if (typeof module !== 'undefined') {
+  module.exports = {
+    findSprintToggleButtons,
+    collapseAllSprints,
+    expandAllSprints,
+    filterSprints,
+    showAllSprints,
+    getSprintState,
+  };
 }

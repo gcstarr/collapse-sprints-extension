@@ -13,6 +13,8 @@ export default [
       globals: {
         ...globals.browser,
         chrome: 'readonly',
+        // 'module' is referenced in content.js for CommonJS exports in the test environment
+        module: 'readonly',
       },
     },
   },
@@ -28,7 +30,7 @@ export default [
     },
   },
 
-  // Test files (Jest + browser environment)
+  // Test files (Jest + Node + browser environment)
   {
     files: ['tests/**/*.test.js'],
     languageOptions: {
@@ -36,6 +38,7 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.jest,
+        ...globals.node,
       },
     },
   },

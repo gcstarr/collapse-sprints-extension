@@ -7,6 +7,9 @@ const MAX_SAVED_FILTERS = 10;
 // Debug logging helper
 let debugModeEnabled = false;
 
+// In-memory cache of saved filters to avoid a storage read on every keystroke
+let cachedSavedFilters = [];
+
 async function loadDebugMode() {
   const data = await chrome.storage.local.get(DEBUG_MODE_KEY);
   debugModeEnabled = data[DEBUG_MODE_KEY] || false;
@@ -17,7 +20,7 @@ async function toggleDebugMode() {
   debugModeEnabled = !debugModeEnabled;
   await chrome.storage.local.set({ [DEBUG_MODE_KEY]: debugModeEnabled });
   updateDebugIndicator();
-  // Always log toggle events (even when disabling) so user can see the change
+  // Always log toggle events so user can see the change
   console.log('[Sprint Collapser Popup] Debug mode:', debugModeEnabled ? 'ENABLED' : 'DISABLED');
 }
 
@@ -38,29 +41,33 @@ function debugLog(...args) {
   }
 }
 
-// Helper to wait for batching to complete
-async function waitForBatchingComplete() {
-  // With 113 buttons at 10/frame, we need time for:
-  // 1. All clicks to be processed (113/10 = ~12 frames)
-  // 2. Jira's React to reconcile the DOM changes
-  // 3. aria-expanded attributes to be updated
-  // Using 3.5 seconds to account for Jira's slower React reconciliation
-  await new Promise(resolve => setTimeout(resolve, 3500));
+// Returns the active tab, or null if none found
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
 }
 
-// Load and display saved filters
+// Sets a button into a loading state using createElement (avoids innerHTML)
+function setButtonLoading(btn, text) {
+  btn.textContent = '';
+  const spinner = document.createElement('span');
+  spinner.className = 'spinner';
+  btn.appendChild(spinner);
+  btn.appendChild(document.createTextNode(text));
+}
+
+// Load and display saved filters from storage, updating the in-memory cache
 async function loadAndDisplaySavedFilters() {
   const data = await chrome.storage.local.get([SAVED_FILTERS_KEY, CURRENT_FILTER_KEY]);
-  const savedFilters = data[SAVED_FILTERS_KEY] || [];
-  
-  displaySavedFilters(savedFilters, data[CURRENT_FILTER_KEY]);
+  cachedSavedFilters = data[SAVED_FILTERS_KEY] || [];
+  displaySavedFilters(cachedSavedFilters, data[CURRENT_FILTER_KEY]);
 }
 
 // Only called on popup load to restore the filter state
 async function restoreFilterState() {
   const data = await chrome.storage.local.get(CURRENT_FILTER_KEY);
   const currentFilter = data[CURRENT_FILTER_KEY] || '';
-  
+
   if (currentFilter) {
     // Disable input since a saved filter is selected
     document.getElementById('filterInput').disabled = true;
@@ -72,7 +79,7 @@ async function restoreFilterState() {
   }
 }
 
-async function displaySavedFilters(savedFilters, currentFilter = '') {
+function displaySavedFilters(savedFilters, currentFilter = '') {
   const container = document.getElementById('savedFilters');
   container.innerHTML = '';
 
@@ -119,13 +126,13 @@ async function displaySavedFilters(savedFilters, currentFilter = '') {
         await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
         document.getElementById('filterInput').value = '';
         document.getElementById('filterInput').disabled = false;
-        
+
         // Send message to clear filter on content script
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = await getActiveTab();
+        if (!tab) return;
         chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, () => {
           updateSaveButtonState();
           updateActionButtonStates();
-          // Just refresh the display, don't re-apply
           loadAndDisplaySavedFilters();
         });
       } else {
@@ -133,13 +140,13 @@ async function displaySavedFilters(savedFilters, currentFilter = '') {
         await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: filter });
         document.getElementById('filterInput').value = filter;
         document.getElementById('filterInput').disabled = true;
-        
+
         // Send message to apply filter on content script
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = await getActiveTab();
+        if (!tab) return;
         chrome.tabs.sendMessage(tab.id, { action: 'filterSprints', filter }, () => {
           updateSaveButtonState();
           updateActionButtonStates();
-          // Just refresh the display, don't re-apply
           loadAndDisplaySavedFilters();
         });
       }
@@ -150,10 +157,8 @@ async function displaySavedFilters(savedFilters, currentFilter = '') {
 }
 
 async function removeSavedFilter(filterText) {
-  const data = await chrome.storage.local.get(SAVED_FILTERS_KEY);
-  let savedFilters = data[SAVED_FILTERS_KEY] || [];
-  savedFilters = savedFilters.filter((f) => f !== filterText).sort();
-  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: savedFilters });
+  cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText).sort();
+  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: cachedSavedFilters });
   loadAndDisplaySavedFilters();
   updateSaveButtonState();
 }
@@ -164,30 +169,28 @@ async function saveFilter(filterText) {
     return;
   }
 
-  const data = await chrome.storage.local.get(SAVED_FILTERS_KEY);
-  let savedFilters = data[SAVED_FILTERS_KEY] || [];
-
-  if (savedFilters.includes(filterText)) {
+  if (cachedSavedFilters.includes(filterText)) {
     // Remove if already saved
-    savedFilters = savedFilters.filter((f) => f !== filterText);
+    cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText);
   } else {
     // Add new filter
-    if (savedFilters.length >= MAX_SAVED_FILTERS) {
+    if (cachedSavedFilters.length >= MAX_SAVED_FILTERS) {
       updateStatus(`Maximum ${MAX_SAVED_FILTERS} saved filters`, false);
       return;
     }
-    savedFilters.push(filterText);
+    cachedSavedFilters = [...cachedSavedFilters, filterText];
   }
 
   // Sort alphabetically before saving
-  savedFilters.sort();
+  cachedSavedFilters.sort();
 
-  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: savedFilters });
+  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: cachedSavedFilters });
   loadAndDisplaySavedFilters();
   updateSaveButtonState();
 }
 
-async function updateSaveButtonState() {
+// Synchronous: uses in-memory cache instead of a storage read
+function updateSaveButtonState() {
   const filterInput = document.getElementById('filterInput');
   const saveBtn = document.getElementById('saveFilterBtn');
   const currentFilter = filterInput.value.trim();
@@ -199,10 +202,7 @@ async function updateSaveButtonState() {
 
   saveBtn.style.display = 'block';
 
-  const data = await chrome.storage.local.get(SAVED_FILTERS_KEY);
-  const savedFilters = data[SAVED_FILTERS_KEY] || [];
-  const isSaved = savedFilters.includes(currentFilter);
-
+  const isSaved = cachedSavedFilters.includes(currentFilter);
   if (isSaved) {
     saveBtn.classList.add('saved');
     saveBtn.textContent = '★';
@@ -215,219 +215,8 @@ async function updateSaveButtonState() {
 function applyFilterDirect(filterText) {
   document.getElementById('filterInput').value = filterText;
   updateSaveButtonState();
-  setTimeout(() => applyFilter(), 50);
+  applyFilter();
 }
-
-document.getElementById('collapseBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('collapseBtn');
-  const originalText = btn.textContent;
-
-  // Show loading state with spinner and disable chips
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Collapsing...';
-  disableFilterChips(true);
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-  chrome.tabs.sendMessage(tab.id, { action: 'collapseAllSprints' }, async (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('[Sprint Collapser Popup] Error sending message:', chrome.runtime.lastError);
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-      updateStatus('Error: ' + chrome.runtime.lastError.message, false);
-    } else if (response) {
-      debugLog('Collapse response:', response);
-      updateStatus(response.message, response.success !== false);
-
-      // Wait for all DOM updates to settle
-      debugLog('Waiting for collapse to complete...');
-      await waitForBatchingComplete();
-      debugLog('Collapse complete');
-
-      // Restore button state and re-enable chips
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-
-      // After collapse, we KNOW:
-      // - Collapse button should be disabled (all collapsed)
-      // - Expand button should be enabled (can expand)
-      document.getElementById('collapseBtn').disabled = true;
-      document.getElementById('expandBtn').disabled = false;
-    } else {
-      console.warn('[Sprint Collapser Popup] No response from content script');
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-      updateStatus('Failed to collapse sprints', false);
-    }
-  });
-});
-
-document.getElementById('expandBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('expandBtn');
-  const originalText = btn.textContent;
-
-  // Show loading state with spinner and disable chips
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Expanding...';
-  disableFilterChips(true);
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-  chrome.tabs.sendMessage(tab.id, { action: 'expandAllSprints' }, async (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('[Sprint Collapser Popup] Error sending message:', chrome.runtime.lastError);
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-      updateStatus('Error: ' + chrome.runtime.lastError.message, false);
-    } else if (response) {
-      debugLog('Expand response:', response);
-      updateStatus(response.message, response.success !== false);
-
-      // Wait for all DOM updates to settle
-      debugLog('Waiting for expand to complete...');
-      await waitForBatchingComplete();
-      debugLog('Expand complete');
-
-      // Restore button state and re-enable chips
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-
-      // After expand, we KNOW:
-      // - Expand button should be disabled (all expanded)
-      // - Collapse button should be enabled (can collapse)
-      document.getElementById('expandBtn').disabled = true;
-      document.getElementById('collapseBtn').disabled = false;
-    } else {
-      console.warn('[Sprint Collapser Popup] No response from content script');
-      btn.disabled = false;
-      btn.textContent = originalText;
-      disableFilterChips(false);
-      updateStatus('Failed to expand sprints', false);
-    }
-  });
-});
-
-async function applyFilter() {
-  const filterText = document.getElementById('filterInput').value.trim();
-
-  if (!filterText) {
-    updateStatus('Please enter a filter', false);
-    return;
-  }
-
-  const btn = document.getElementById('filterBtn');
-  const originalText = btn.textContent;
-
-  // Show loading state with spinner and disable chips
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Filtering...';
-  disableFilterChips(true);
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-  chrome.tabs.sendMessage(tab.id, { action: 'filterSprints', filter: filterText }, (response) => {
-    // Restore button state and re-enable chips
-    btn.disabled = false;
-    btn.textContent = originalText;
-    disableFilterChips(false);
-
-    if (response) {
-      updateStatus(response.message, response.success);
-
-      // Only save to CURRENT_FILTER_KEY if it's a saved filter
-      chrome.storage.local.get(SAVED_FILTERS_KEY, (result) => {
-        const savedFilters = result[SAVED_FILTERS_KEY] || [];
-        if (!savedFilters.includes(filterText)) {
-          // Custom filter - clear CURRENT_FILTER_KEY so no chip appears selected
-          chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
-        }
-        // If it IS a saved filter, CURRENT_FILTER_KEY was already set when the chip was clicked
-        loadAndDisplaySavedFilters();
-      });
-    } else {
-      updateStatus('Failed to filter sprints', false);
-    }
-
-    // Update button states after action completes
-    updateActionButtonStates();
-  });
-}
-
-document.getElementById('filterBtn').addEventListener('click', applyFilter);
-
-document.getElementById('closeBtn').addEventListener('click', () => {
-  window.close();
-});
-
-document.getElementById('saveFilterBtn').addEventListener('click', async () => {
-  const filterText = document.getElementById('filterInput').value.trim();
-  const data = await chrome.storage.local.get(SAVED_FILTERS_KEY);
-  const savedFilters = data[SAVED_FILTERS_KEY] || [];
-  const isSaved = savedFilters.includes(filterText);
-
-  if (isSaved) {
-    // Only show confirmation when removing
-    if (confirm(`Remove "${filterText}" from saved filters?`)) {
-      saveFilter(filterText);
-    }
-  } else {
-    // No confirmation when adding
-    saveFilter(filterText);
-  }
-});
-
-document.getElementById('filterInput').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    applyFilter();
-  }
-});
-
-document.getElementById('filterInput').addEventListener('input', async () => {
-  updateSaveButtonState();
-  updateActionButtonStates();
-});
-
-document.getElementById('showAllBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('showAllBtn');
-  const originalText = btn.textContent;
-
-  // Show loading state with spinner and disable chips
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Showing...';
-  disableFilterChips(true);
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-  chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, (response) => {
-    // Restore button state and re-enable chips
-    btn.disabled = false;
-    btn.textContent = originalText;
-    disableFilterChips(false);
-
-    if (response) {
-      updateStatus(response.message, true);
-
-      // Clear the filter input and saved filter
-      document.getElementById('filterInput').value = '';
-      document.getElementById('filterInput').disabled = false;
-      chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
-      updateSaveButtonState();
-
-      // Refresh saved filters display to remove selected state
-      loadAndDisplaySavedFilters();
-    } else {
-      updateStatus('Failed to show sprints', false);
-    }
-
-    // Update button states after action completes
-    updateActionButtonStates();
-  });
-});
 
 function updateStatus(message, isSuccess) {
   const statusDiv = document.getElementById('status');
@@ -481,7 +270,11 @@ function updateCollapseExpandButtonText(hasFilterApplied) {
 }
 
 async function updateActionButtonStates(callback) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getActiveTab();
+  if (!tab) {
+    if (callback) callback();
+    return;
+  }
 
   chrome.tabs.sendMessage(
     tab.id,
@@ -531,7 +324,10 @@ function isUrlSupported(url) {
 
 // Check if we're on a supported page when popup loads
 async function checkSupportedPage(retries = 5, delay = 200) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getActiveTab();
+  if (!tab) return;
+
+  const totalRetries = retries;
 
   // Disable action buttons initially until state is loaded
   document.getElementById('collapseBtn').disabled = true;
@@ -558,22 +354,18 @@ async function checkSupportedPage(retries = 5, delay = 200) {
   debugLog('URL is supported, attempting to reach content script');
 
   const attemptCheck = (retriesLeft) => {
-    debugLog(`Attempting to reach content script (${5 - retriesLeft + 1}/5)`);
+    debugLog(`Attempting to reach content script (${totalRetries - retriesLeft + 1}/${totalRetries})`);
 
-    // Try to send a test message to see if content script is active
     chrome.tabs.sendMessage(
       tab.id,
       { action: 'checkPageSupport' },
       async (response) => {
-        // If no response or error, retry or show error if out of retries
         if (chrome.runtime.lastError || !response) {
           debugLog(`No response:`, chrome.runtime.lastError?.message);
           if (retriesLeft > 0) {
-            // Retry with a small delay
             debugLog(`Retrying in ${delay}ms...`);
             setTimeout(() => attemptCheck(retriesLeft - 1), delay);
           } else {
-            // Out of retries, show error with more helpful message
             debugLog('Max retries reached, content script not responding');
             disableAllControls(true);
             const statusDiv = document.getElementById('status');
@@ -587,7 +379,6 @@ async function checkSupportedPage(retries = 5, delay = 200) {
           loadAndDisplaySavedFilters();
           await restoreFilterState();
           // Update button states based on current sprint state
-          // Callback fires after state is loaded, popup is now ready
           updateActionButtonStates(() => {
             debugLog('Popup initialized and ready');
           });
@@ -599,15 +390,222 @@ async function checkSupportedPage(retries = 5, delay = 200) {
   attemptCheck(retries);
 }
 
-// Initialize debug mode
-loadDebugMode();
+async function applyFilter() {
+  const filterText = document.getElementById('filterInput').value.trim();
 
-// Add triple-click handler to title for debug toggle
-document.querySelector('h2').addEventListener('click', (e) => {
-  if (e.detail === 3) {
-    toggleDebugMode();
+  if (!filterText) {
+    updateStatus('Please enter a filter', false);
+    return;
   }
-});
 
-// Run check when popup opens
-checkSupportedPage();
+  const btn = document.getElementById('filterBtn');
+  const originalText = btn.textContent;
+
+  // Show loading state with spinner and disable chips
+  btn.disabled = true;
+  setButtonLoading(btn, 'Filtering...');
+  disableFilterChips(true);
+
+  const tab = await getActiveTab();
+  if (!tab) {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    disableFilterChips(false);
+    return;
+  }
+
+  chrome.tabs.sendMessage(tab.id, { action: 'filterSprints', filter: filterText }, (response) => {
+    // Restore button state and re-enable chips
+    btn.disabled = false;
+    btn.textContent = originalText;
+    disableFilterChips(false);
+
+    if (response) {
+      updateStatus(response.message, response.success);
+
+      // Only save to CURRENT_FILTER_KEY if it's a saved filter
+      chrome.storage.local.get(SAVED_FILTERS_KEY, (result) => {
+        const savedFilters = result[SAVED_FILTERS_KEY] || [];
+        if (!savedFilters.includes(filterText)) {
+          // Custom filter - clear CURRENT_FILTER_KEY so no chip appears selected
+          chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
+        }
+        // If it IS a saved filter, CURRENT_FILTER_KEY was already set when the chip was clicked
+        loadAndDisplaySavedFilters();
+      });
+    } else {
+      updateStatus('Failed to filter sprints', false);
+    }
+
+    // Update button states after action completes
+    updateActionButtonStates();
+  });
+}
+
+function init() {
+  document.getElementById('collapseBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('collapseBtn');
+    const originalText = btn.textContent;
+
+    btn.disabled = true;
+    setButtonLoading(btn, 'Collapsing...');
+    disableFilterChips(true);
+
+    const tab = await getActiveTab();
+    if (!tab) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      disableFilterChips(false);
+      return;
+    }
+
+    chrome.tabs.sendMessage(tab.id, { action: 'collapseAllSprints' }, async (response) => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      disableFilterChips(false);
+
+      if (chrome.runtime.lastError) {
+        console.error('[Sprint Collapser Popup] Error sending message:', chrome.runtime.lastError);
+        updateStatus('Error: ' + chrome.runtime.lastError.message, false);
+      } else if (response) {
+        debugLog('Collapse response:', response);
+        updateStatus(response.message, response.success !== false);
+        // Brief wait for Jira's React renderer to process the click events before querying state
+        await new Promise(resolve => setTimeout(resolve, 800));
+        updateActionButtonStates();
+      } else {
+        console.warn('[Sprint Collapser Popup] No response from content script');
+        updateStatus('Failed to collapse sprints', false);
+      }
+    });
+  });
+
+  document.getElementById('expandBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('expandBtn');
+    const originalText = btn.textContent;
+
+    btn.disabled = true;
+    setButtonLoading(btn, 'Expanding...');
+    disableFilterChips(true);
+
+    const tab = await getActiveTab();
+    if (!tab) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      disableFilterChips(false);
+      return;
+    }
+
+    chrome.tabs.sendMessage(tab.id, { action: 'expandAllSprints' }, async (response) => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      disableFilterChips(false);
+
+      if (chrome.runtime.lastError) {
+        console.error('[Sprint Collapser Popup] Error sending message:', chrome.runtime.lastError);
+        updateStatus('Error: ' + chrome.runtime.lastError.message, false);
+      } else if (response) {
+        debugLog('Expand response:', response);
+        updateStatus(response.message, response.success !== false);
+        // Brief wait for Jira's React renderer to process the click events before querying state
+        await new Promise(resolve => setTimeout(resolve, 800));
+        updateActionButtonStates();
+      } else {
+        console.warn('[Sprint Collapser Popup] No response from content script');
+        updateStatus('Failed to expand sprints', false);
+      }
+    });
+  });
+
+  document.getElementById('filterBtn').addEventListener('click', applyFilter);
+
+  document.getElementById('closeBtn').addEventListener('click', () => {
+    window.close();
+  });
+
+  document.getElementById('saveFilterBtn').addEventListener('click', async () => {
+    const filterText = document.getElementById('filterInput').value.trim();
+    const isSaved = cachedSavedFilters.includes(filterText);
+
+    if (isSaved) {
+      // Only show confirmation when removing
+      if (confirm(`Remove "${filterText}" from saved filters?`)) {
+        saveFilter(filterText);
+      }
+    } else {
+      // No confirmation when adding
+      saveFilter(filterText);
+    }
+  });
+
+  document.getElementById('filterInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      applyFilter();
+    }
+  });
+
+  document.getElementById('filterInput').addEventListener('input', () => {
+    updateSaveButtonState();
+    updateActionButtonStates();
+  });
+
+  document.getElementById('showAllBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('showAllBtn');
+    const originalText = btn.textContent;
+
+    btn.disabled = true;
+    setButtonLoading(btn, 'Showing...');
+    disableFilterChips(true);
+
+    const tab = await getActiveTab();
+    if (!tab) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      disableFilterChips(false);
+      return;
+    }
+
+    chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, (response) => {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      disableFilterChips(false);
+
+      if (response) {
+        updateStatus(response.message, true);
+
+        // Clear the filter input and saved filter
+        document.getElementById('filterInput').value = '';
+        document.getElementById('filterInput').disabled = false;
+        chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
+        updateSaveButtonState();
+
+        // Refresh saved filters display to remove selected state
+        loadAndDisplaySavedFilters();
+      } else {
+        updateStatus('Failed to show sprints', false);
+      }
+
+      // Update button states after action completes
+      updateActionButtonStates();
+    });
+  });
+
+  // Add triple-click handler to title for debug toggle
+  document.querySelector('h2').addEventListener('click', (e) => {
+    if (e.detail === 3) {
+      toggleDebugMode();
+    }
+  });
+
+  // Initialize debug mode and check page support
+  loadDebugMode();
+  checkSupportedPage();
+}
+
+// Defer initialization until DOM is ready. For a script at the bottom of <body>,
+// the DOM is already parsed, so init() runs immediately in practice.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
