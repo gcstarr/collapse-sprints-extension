@@ -304,8 +304,10 @@ async function updateActionButtonStates(tabIdOrCallback, callback) {
       // Update button text based on filter state
       updateCollapseExpandButtonText(hasFilterApplied);
 
-      // Disable Hide Non-Matching if no text OR if a filter is already applied
-      document.getElementById('filterBtn').disabled = !hasFilterText || hasFilterApplied;
+      // Disable Hide Non-Matching if no text, or if the currently active filter
+      // matches what's in the input (applying it again would be a no-op).
+      const inputMatchesActiveFilter = filterInput.value.trim() === cachedCurrentFilter;
+      document.getElementById('filterBtn').disabled = !hasFilterText || (hasFilterApplied && inputMatchesActiveFilter);
 
       // Disable Show All if no sprints are filtered
       document.getElementById('showAllBtn').disabled = !hasFilterApplied;
