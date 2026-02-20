@@ -1,3 +1,5 @@
+// Requires the 'canvas' package: npm install canvas
+// This is a one-time script; icons are committed so normal dev does not need it.
 const fs = require('fs');
 const { createCanvas } = require('canvas');
 

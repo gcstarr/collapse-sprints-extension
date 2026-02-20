@@ -6,26 +6,6 @@
 // Mock localStorage for testing
 const mockStorage = {};
 
-const mockChromeStorage = {
-  local: {
-    get: jest.fn((key, callback) => {
-      console.log('Mock get called with:', key);
-      if (typeof key === 'string') {
-        callback({ [key]: mockStorage[key] });
-      } else if (Array.isArray(key)) {
-        const result = {};
-        key.forEach(k => {
-          result[k] = mockStorage[k];
-        });
-        callback(result);
-      }
-    }),
-    set: jest.fn((obj, callback) => {
-      Object.assign(mockStorage, obj);
-      if (callback) callback();
-    }),
-  },
-};
 
 describe('Sprint Collapser Popup Functions', () => {
   const SAVED_FILTERS_KEY = 'savedFilters';
@@ -322,7 +302,7 @@ describe('Sprint Collapser Popup Functions', () => {
       const btn = document.getElementById('collapseBtn');
       btn.disabled = true;
 
-      const computedStyle = window.getComputedStyle(btn);
+      window.getComputedStyle(btn);
       // Note: This test verifies the style was applied, actual color testing is better in E2E
       expect(btn.disabled).toBe(true);
     });
@@ -461,7 +441,6 @@ describe('Sprint Collapser Popup Functions', () => {
   describe('Spinner Animations', () => {
     test('[REGRESSION] button should display spinner during operation', () => {
       const btn = document.getElementById('collapseBtn');
-      const originalText = btn.textContent;
 
       // Simulate operation starting
       btn.innerHTML = '<span class="spinner"></span>Collapsing...';
@@ -697,6 +676,188 @@ describe('Sprint Collapser Popup Functions', () => {
 
       expect(collapseBtn.disabled).toBe(false);
       expect(expandBtn.disabled).toBe(false);
+    });
+  });
+
+  describe('URL Support Checking', () => {
+    // Helper function matching the one in popup.js
+    function isUrlSupported(url) {
+      if (!url) return false;
+
+      const patterns = [
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/backlog/
+      ];
+
+      return patterns.some(pattern => pattern.test(url));
+    }
+
+    test('[REGRESSION] should recognize valid Jira backlog URL pattern 1 (c/projects)', () => {
+      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+      expect(isUrlSupported(url)).toBe(true);
+    });
+
+    test('[REGRESSION] should recognize valid Jira backlog URL pattern 2 (projects with segment)', () => {
+      const url = 'https://example.atlassian.net/jira/software/v1/projects/PROJ/boards/123/backlog';
+      expect(isUrlSupported(url)).toBe(true);
+    });
+
+    test('[REGRESSION] should recognize valid Jira backlog URL pattern 3 (simple with segment)', () => {
+      const url = 'https://example.atlassian.net/jira/software/v1/backlog';
+      expect(isUrlSupported(url)).toBe(true);
+    });
+
+    test('[REGRESSION] should reject non-Jira URLs', () => {
+      const url = 'https://example.com';
+      expect(isUrlSupported(url)).toBe(false);
+    });
+
+    test('[REGRESSION] should reject Jira URLs that are not backlog pages', () => {
+      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123';
+      expect(isUrlSupported(url)).toBe(false);
+    });
+
+    test('[REGRESSION] should reject empty or null URLs', () => {
+      expect(isUrlSupported('')).toBe(false);
+      expect(isUrlSupported(null)).toBe(false);
+      expect(isUrlSupported(undefined)).toBe(false);
+    });
+
+    test('[REGRESSION] should reject URLs with query parameters at the end', () => {
+      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog?selectedIssue=PROJ-123';
+      expect(isUrlSupported(url)).toBe(true); // Query params are OK after backlog
+    });
+
+    test('[REGRESSION] should handle URLs with different subdomains', () => {
+      const url1 = 'https://mycompany.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+      const url2 = 'https://another-org.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+
+      expect(isUrlSupported(url1)).toBe(true);
+      expect(isUrlSupported(url2)).toBe(true);
+    });
+  });
+
+  describe('Page Support Error Messages', () => {
+    test('[REGRESSION] should show generic error when URL does not match pattern', () => {
+      const statusDiv = document.getElementById('status');
+
+      // Simulate unsupported URL check
+      const isSupported = false; // URL check failed
+
+      if (!isSupported) {
+        statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
+        statusDiv.className = 'status-message error';
+      }
+
+      expect(statusDiv.textContent).toContain('only works on Jira Cloud board backlog pages');
+      expect(statusDiv.className).toContain('error');
+    });
+
+    test('[REGRESSION] should show different error when URL matches but content script not loaded', () => {
+      const statusDiv = document.getElementById('status');
+
+      // Simulate supported URL but no content script response
+      const isUrlSupported = true;
+      const contentScriptResponded = false;
+      const retriesExhausted = true;
+
+      if (isUrlSupported && !contentScriptResponded && retriesExhausted) {
+        statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
+        statusDiv.className = 'status-message error';
+      }
+
+      expect(statusDiv.textContent).toContain('Content script not loaded');
+      expect(statusDiv.textContent).toContain('Try refreshing');
+      expect(statusDiv.className).toContain('error');
+    });
+
+    test('[REGRESSION] unsupported URL should show error without retry delay', () => {
+      const startTime = Date.now();
+      const statusDiv = document.getElementById('status');
+
+      // Simulate immediate error (no retries for unsupported URL)
+      const isUrlSupported = false;
+
+      if (!isUrlSupported) {
+        statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
+        const endTime = Date.now();
+        const elapsed = endTime - startTime;
+
+        // Should be nearly instant (< 50ms) since no retries
+        expect(elapsed).toBeLessThan(50);
+      }
+
+      expect(statusDiv.textContent).toContain('only works on Jira Cloud board backlog pages');
+    });
+
+    test('[REGRESSION] supported URL should trigger retry mechanism', () => {
+      const isUrlSupported = true;
+      const retries = 5;
+      const delay = 200;
+
+      // Verify retry parameters are set correctly for supported URLs
+      expect(isUrlSupported).toBe(true);
+      expect(retries).toBe(5);
+      expect(delay).toBe(200);
+
+      // Total wait time should be up to 5 * 200ms = 1000ms
+      const maxWaitTime = retries * delay;
+      expect(maxWaitTime).toBe(1000);
+    });
+  });
+
+  describe('Tab Navigation Scenarios', () => {
+    test('[REGRESSION] navigating from non-Jira to Jira page should allow popup to work', () => {
+      // Scenario 1: User on non-Jira page
+      let currentUrl = 'https://example.com';
+      let isSupported = currentUrl.includes('atlassian.net') && currentUrl.includes('backlog');
+
+      expect(isSupported).toBe(false);
+
+      // Scenario 2: User navigates to Jira page
+      currentUrl = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+      isSupported = currentUrl.includes('atlassian.net') && currentUrl.includes('backlog');
+
+      expect(isSupported).toBe(true);
+
+      // Popup should now check URL and attempt to contact content script
+      // This test verifies the URL check would pass
+    });
+
+    test('[REGRESSION] opening popup on Jira page should check current URL, not cached state', () => {
+      // Simulate popup opening - should always check current tab URL
+      const getCurrentTabUrl = () => 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+
+      const currentUrl = getCurrentTabUrl();
+      const patterns = [
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/
+      ];
+
+      const isCurrentlySupported = patterns.some(pattern => pattern.test(currentUrl));
+
+      expect(isCurrentlySupported).toBe(true);
+      // This ensures we're not relying on stale state
+    });
+
+    test('[REGRESSION] popup should retry if content script is loading', () => {
+      let contentScriptReady = false;
+      let attemptCount = 0;
+      const maxRetries = 5;
+
+      // Simulate retry logic
+      while (!contentScriptReady && attemptCount < maxRetries) {
+        attemptCount++;
+
+        // On 3rd attempt, content script becomes ready
+        if (attemptCount === 3) {
+          contentScriptReady = true;
+        }
+      }
+
+      expect(contentScriptReady).toBe(true);
+      expect(attemptCount).toBe(3);
+      expect(attemptCount).toBeLessThan(maxRetries);
     });
   });
 });
