@@ -10,6 +10,8 @@ const {
   filterSprints,
   showAllSprints,
   getSprintState,
+  triggerVirtualListRefresh,
+  waitForSprintsAndFilter,
 } = require('../content.js');
 
 // Mock DOM helper for testing
@@ -353,6 +355,110 @@ describe('Sprint Collapser Content Script', () => {
       // All visible sprints are expanded, but we have filtered sprints
       expect(state.anyFiltered).toBe(true);
       expect(findSprintToggleButtons()).toHaveLength(2);
+    });
+  });
+
+  describe('triggerVirtualListRefresh', () => {
+    function createScrollContainer() {
+      const container = document.createElement('div');
+      container.setAttribute('data-testid', 'software-backlog.backlog-content.scrollable');
+      document.body.appendChild(container);
+      return container;
+    }
+
+    test('should do nothing if scroll container is not in DOM', () => {
+      expect(() => triggerVirtualListRefresh()).not.toThrow();
+    });
+
+    test('should nudge scrollTop of the scroll container by 1', () => {
+      const container = createScrollContainer();
+      container.scrollTop = 0;
+
+      triggerVirtualListRefresh();
+      jest.advanceTimersByTime(50);
+
+      expect(container.scrollTop).toBe(1);
+    });
+
+    test('should restore original scrollTop after the nudge', () => {
+      const container = createScrollContainer();
+      container.scrollTop = 0;
+
+      triggerVirtualListRefresh();
+      // jest.runAllTimers() covers both the outer setTimeout(50ms) and the inner rAF,
+      // which Jest fakes as a timer when using fake timers.
+      jest.runAllTimers();
+
+      expect(container.scrollTop).toBe(0);
+    });
+  });
+
+  describe('waitForSprintsAndFilter', () => {
+    // jest.spyOn restores automatically via the outer afterEach → jest.restoreAllMocks()
+    function mockMutationObserver(impl) {
+      return jest.spyOn(global, 'MutationObserver').mockImplementation(impl);
+    }
+
+    test('should apply filter immediately when sprint buttons already exist', () => {
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+
+      waitForSprintsAndFilter('Team-A');
+      jest.runAllTimers();
+
+      const buttons = findSprintToggleButtons();
+      const outerA = buttons[0].closest('div[data-drop-target-for-element="true"]').parentElement;
+      const outerB = buttons[1].closest('div[data-drop-target-for-element="true"]').parentElement;
+
+      expect(outerA.getAttribute('data-filtered-hidden')).toBeNull();
+      expect(outerB.getAttribute('data-filtered-hidden')).toBe('true');
+    });
+
+    test('should observe DOM and apply filter when buttons appear later', () => {
+      let capturedCallback = null;
+      const mockObserver = { observe: jest.fn(), disconnect: jest.fn() };
+      mockMutationObserver(cb => { capturedCallback = cb; return mockObserver; });
+
+      waitForSprintsAndFilter('Team-A');
+
+      expect(mockObserver.observe).toHaveBeenCalledWith(
+        document.body,
+        expect.objectContaining({ childList: true, subtree: true })
+      );
+
+      // Simulate buttons appearing in DOM, then MutationObserver firing
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+      capturedCallback();
+      jest.runAllTimers();
+
+      const buttons = findSprintToggleButtons();
+      const outerB = buttons[1].closest('div[data-drop-target-for-element="true"]').parentElement;
+      expect(outerB.getAttribute('data-filtered-hidden')).toBe('true');
+      expect(mockObserver.disconnect).toHaveBeenCalled();
+    });
+
+    test('should not apply filter if observer fires before buttons appear', () => {
+      let capturedCallback = null;
+      const mockObserver = { observe: jest.fn(), disconnect: jest.fn() };
+      mockMutationObserver(cb => { capturedCallback = cb; return mockObserver; });
+
+      waitForSprintsAndFilter('Team-A');
+      capturedCallback(); // Fire callback with no buttons in DOM yet
+
+      // Guard in observer callback: no buttons found → keep observing, do not disconnect
+      expect(mockObserver.disconnect).not.toHaveBeenCalled();
+      expect(findSprintToggleButtons()).toHaveLength(0);
+    });
+
+    test('should disconnect observer after 15 seconds if no sprints appear', () => {
+      const mockObserver = { observe: jest.fn(), disconnect: jest.fn() };
+      mockMutationObserver(() => mockObserver);
+
+      waitForSprintsAndFilter('Team-A');
+      jest.advanceTimersByTime(15000);
+
+      expect(mockObserver.disconnect).toHaveBeenCalled();
     });
   });
 

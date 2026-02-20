@@ -396,5 +396,7 @@ if (typeof module !== 'undefined') {
     filterSprints,
     showAllSprints,
     getSprintState,
+    triggerVirtualListRefresh,
+    waitForSprintsAndFilter,
   };
 }
