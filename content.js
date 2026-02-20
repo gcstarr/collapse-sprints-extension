@@ -269,8 +269,14 @@ function getSprintState() {
   let collapsedCount = 0;
   let expandedCount = 0;
   let unknownCount = 0;
+  let visibleCount = 0;
 
+  // Only count visible (non-filtered) sprints for allCollapsed/allExpanded so that
+  // collapse/expand buttons disable correctly when a filter is active.
   buttons.forEach((button) => {
+    if (isSprintFiltered(button)) return;
+
+    visibleCount++;
     const ariaExpanded = button.getAttribute('aria-expanded');
     if (ariaExpanded === 'false') {
       collapsedCount++;
@@ -283,13 +289,13 @@ function getSprintState() {
     }
   });
 
-  debugLog(`State counts - Collapsed: ${collapsedCount}, Expanded: ${expandedCount}, Unknown: ${unknownCount}, Total: ${buttons.length}`);
+  debugLog(`State counts - Collapsed: ${collapsedCount}, Expanded: ${expandedCount}, Unknown: ${unknownCount}, Visible: ${visibleCount}, Total: ${buttons.length}`);
 
   const anyFiltered = document.querySelector('[data-filtered-hidden="true"]') !== null;
 
   return {
-    allCollapsed: collapsedCount === buttons.length && expandedCount === 0,
-    allExpanded: expandedCount === buttons.length && collapsedCount === 0,
+    allCollapsed: visibleCount > 0 && collapsedCount === visibleCount && expandedCount === 0,
+    allExpanded: visibleCount > 0 && expandedCount === visibleCount && collapsedCount === 0,
     anyFiltered: anyFiltered
   };
 }
