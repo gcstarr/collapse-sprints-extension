@@ -5,6 +5,13 @@ export default [
   // Base: recommended rules for all files
   js.configs.recommended,
 
+  // Stricter unused-variable checking: flag ALL unused function arguments
+  {
+    rules: {
+      'no-unused-vars': ['error', { args: 'all', argsIgnorePattern: '^_' }],
+    },
+  },
+
   // Extension source files (browser + Chrome extension environment)
   {
     files: ['content.js', 'popup.js'],

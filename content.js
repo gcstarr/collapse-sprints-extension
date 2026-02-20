@@ -302,32 +302,39 @@ function getSprintState() {
 
 // Listen for messages from the popup
 if (typeof chrome !== 'undefined' && chrome.runtime) {
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    try {
-      debugLog('Received message:', request.action);
+  // Actions that call sendResponse asynchronously — listener must return true for these
+  // to keep the message channel open.
+  const asyncActions = new Set(['collapseAllSprints', 'expandAllSprints']);
 
-      if (request.action === 'collapseAllSprints') {
-        collapseAllSprints(sendResponse);
-        return true; // Keep message channel open for async response
-      } else if (request.action === 'expandAllSprints') {
-        expandAllSprints(sendResponse);
-        return true; // Keep message channel open for async response
-      } else if (request.action === 'filterSprints') {
-        sendResponse(filterSprints(request.filter));
-      } else if (request.action === 'showAllSprints') {
-        sendResponse(showAllSprints());
-      } else if (request.action === 'checkPageSupport') {
-        debugLog('Page support check - responding with supported: true');
-        sendResponse({ supported: true });
-      } else if (request.action === 'getSprintState') {
-        const state = getSprintState();
-        debugLog('Sprint state:', state);
-        sendResponse(state);
-      }
+  const messageHandlers = {
+    collapseAllSprints: (_request, sendResponse) => { collapseAllSprints(sendResponse); },
+    expandAllSprints:   (_request, sendResponse) => { expandAllSprints(sendResponse); },
+    filterSprints:      (request, sendResponse)  => { sendResponse(filterSprints(request.filter)); },
+    showAllSprints:     (_request, sendResponse) => { sendResponse(showAllSprints()); },
+    checkPageSupport:   (_request, sendResponse) => {
+      debugLog('Page support check - responding with supported: true');
+      sendResponse({ supported: true });
+    },
+    getSprintState: (_request, sendResponse) => {
+      const state = getSprintState();
+      debugLog('Sprint state:', state);
+      sendResponse(state);
+    },
+  };
+
+  
+
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    debugLog('Received message:', request.action);
+    const handler = messageHandlers[request.action];
+    if (!handler) return;
+    try {
+      handler(request, sendResponse);
     } catch (error) {
       console.error('[Sprint Collapser] Error handling message:', error);
       sendResponse({ success: false, message: 'Error: ' + error.message });
     }
+    return asyncActions.has(request.action);
   });
 }
 

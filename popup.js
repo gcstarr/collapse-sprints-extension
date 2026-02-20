@@ -7,8 +7,9 @@ const MAX_SAVED_FILTERS = 10;
 // Debug logging helper
 let debugModeEnabled = false;
 
-// In-memory cache of saved filters to avoid a storage read on every keystroke
+// In-memory caches to avoid repeated storage reads
 let cachedSavedFilters = [];
+let cachedCurrentFilter = '';
 
 async function loadDebugMode() {
   const data = await chrome.storage.local.get(DEBUG_MODE_KEY);
@@ -56,24 +57,20 @@ function setButtonLoading(btn, text) {
   btn.appendChild(document.createTextNode(text));
 }
 
-// Load and display saved filters from storage, updating the in-memory cache
-async function loadAndDisplaySavedFilters() {
+// Initializes both saved-filter list and current filter state with a single storage read
+async function initializeFilterState() {
   const data = await chrome.storage.local.get([SAVED_FILTERS_KEY, CURRENT_FILTER_KEY]);
   cachedSavedFilters = data[SAVED_FILTERS_KEY] || [];
-  displaySavedFilters(cachedSavedFilters, data[CURRENT_FILTER_KEY]);
-}
+  cachedCurrentFilter = data[CURRENT_FILTER_KEY] || '';
+  displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
 
-// Only called on popup load to restore the filter state
-async function restoreFilterState() {
-  const data = await chrome.storage.local.get(CURRENT_FILTER_KEY);
-  const currentFilter = data[CURRENT_FILTER_KEY] || '';
-
-  if (currentFilter) {
-    // Disable input since a saved filter is selected
-    document.getElementById('filterInput').disabled = true;
-    applyFilterDirect(currentFilter);
+  if (cachedCurrentFilter) {
+    // Only disable the input when the active filter came from a saved chip.
+    // Custom filter text should remain editable on re-open.
+    const isSavedFilter = cachedSavedFilters.includes(cachedCurrentFilter);
+    document.getElementById('filterInput').disabled = isSavedFilter;
+    applyFilterDirect(cachedCurrentFilter);
   } else {
-    // No saved filter - ensure input is cleared and enabled
     document.getElementById('filterInput').value = '';
     document.getElementById('filterInput').disabled = false;
   }
@@ -123,6 +120,7 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
 
       if (isSelected) {
         // Deselect: clear filter and enable input
+        cachedCurrentFilter = '';
         await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
         document.getElementById('filterInput').value = '';
         document.getElementById('filterInput').disabled = false;
@@ -132,11 +130,12 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
         if (!tab) return;
         chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, () => {
           updateSaveButtonState();
-          updateActionButtonStates();
-          loadAndDisplaySavedFilters();
+          updateActionButtonStates(tab.id);
+          displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
         });
       } else {
         // Select: apply filter and disable input
+        cachedCurrentFilter = filter;
         await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: filter });
         document.getElementById('filterInput').value = filter;
         document.getElementById('filterInput').disabled = true;
@@ -146,8 +145,8 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
         if (!tab) return;
         chrome.tabs.sendMessage(tab.id, { action: 'filterSprints', filter }, () => {
           updateSaveButtonState();
-          updateActionButtonStates();
-          loadAndDisplaySavedFilters();
+          updateActionButtonStates(tab.id);
+          displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
         });
       }
     });
@@ -158,8 +157,13 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
 
 async function removeSavedFilter(filterText) {
   cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText).sort();
-  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: cachedSavedFilters });
-  loadAndDisplaySavedFilters();
+  const updates = { [SAVED_FILTERS_KEY]: cachedSavedFilters };
+  if (cachedCurrentFilter === filterText) {
+    cachedCurrentFilter = '';
+    updates[CURRENT_FILTER_KEY] = '';
+  }
+  await chrome.storage.local.set(updates);
+  displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
   updateSaveButtonState();
 }
 
@@ -185,7 +189,7 @@ async function saveFilter(filterText) {
   cachedSavedFilters.sort();
 
   await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: cachedSavedFilters });
-  loadAndDisplaySavedFilters();
+  displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
   updateSaveButtonState();
 }
 
@@ -269,19 +273,24 @@ function updateCollapseExpandButtonText(hasFilterApplied) {
   }
 }
 
-async function updateActionButtonStates(callback) {
-  const tab = await getActiveTab();
-  if (!tab) {
-    if (callback) callback();
-    return;
+async function updateActionButtonStates(tabIdOrCallback, callback) {
+  let tabId, cb;
+  if (typeof tabIdOrCallback === 'number') {
+    tabId = tabIdOrCallback;
+    cb = callback;
+  } else {
+    cb = tabIdOrCallback;
+    const tab = await getActiveTab();
+    if (!tab) { if (cb) cb(); return; }
+    tabId = tab.id;
   }
 
   chrome.tabs.sendMessage(
-    tab.id,
+    tabId,
     { action: 'getSprintState' },
     (response) => {
       if (chrome.runtime.lastError || !response) {
-        if (callback) callback();
+        if (cb) cb();
         return; // Not on supported page
       }
 
@@ -304,7 +313,7 @@ async function updateActionButtonStates(callback) {
       // Disable Expand All if all already expanded
       document.getElementById('expandBtn').disabled = response.allExpanded;
 
-      if (callback) callback();
+      if (cb) cb();
     }
   );
 }
@@ -376,8 +385,7 @@ async function checkSupportedPage(retries = 5, delay = 200) {
         } else {
           // Successful response, initialize popup
           debugLog('Content script responded, initializing popup');
-          loadAndDisplaySavedFilters();
-          await restoreFilterState();
+          await initializeFilterState();
           // Update button states based on current sprint state
           updateActionButtonStates(() => {
             debugLog('Popup initialized and ready');
@@ -423,22 +431,21 @@ async function applyFilter() {
     if (response) {
       updateStatus(response.message, response.success);
 
-      // Only save to CURRENT_FILTER_KEY if it's a saved filter
-      chrome.storage.local.get(SAVED_FILTERS_KEY, (result) => {
-        const savedFilters = result[SAVED_FILTERS_KEY] || [];
-        if (!savedFilters.includes(filterText)) {
-          // Custom filter - clear CURRENT_FILTER_KEY so no chip appears selected
-          chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
-        }
-        // If it IS a saved filter, CURRENT_FILTER_KEY was already set when the chip was clicked
-        loadAndDisplaySavedFilters();
-      });
+      // Always persist the active filter text so it's restored when the popup reopens.
+      // Chip selection is determined by whether the text matches a saved filter — no
+      // separate flag needed.
+      if (!cachedSavedFilters.includes(filterText)) {
+        cachedCurrentFilter = filterText;
+        chrome.storage.local.set({ [CURRENT_FILTER_KEY]: filterText });
+      }
+      // If it IS a saved filter, CURRENT_FILTER_KEY was already set when the chip was clicked
+      displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
     } else {
       updateStatus('Failed to filter sprints', false);
     }
 
     // Update button states after action completes
-    updateActionButtonStates();
+    updateActionButtonStates(tab.id);
   });
 }
 
@@ -472,7 +479,7 @@ function init() {
         updateStatus(response.message, response.success !== false);
         // Brief wait for Jira's React renderer to process the click events before querying state
         await new Promise(resolve => setTimeout(resolve, 800));
-        updateActionButtonStates();
+        updateActionButtonStates(tab.id);
       } else {
         console.warn('[Sprint Collapser Popup] No response from content script');
         updateStatus('Failed to collapse sprints', false);
@@ -509,7 +516,7 @@ function init() {
         updateStatus(response.message, response.success !== false);
         // Brief wait for Jira's React renderer to process the click events before querying state
         await new Promise(resolve => setTimeout(resolve, 800));
-        updateActionButtonStates();
+        updateActionButtonStates(tab.id);
       } else {
         console.warn('[Sprint Collapser Popup] No response from content script');
         updateStatus('Failed to expand sprints', false);
@@ -576,17 +583,18 @@ function init() {
         // Clear the filter input and saved filter
         document.getElementById('filterInput').value = '';
         document.getElementById('filterInput').disabled = false;
+        cachedCurrentFilter = '';
         chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
         updateSaveButtonState();
 
         // Refresh saved filters display to remove selected state
-        loadAndDisplaySavedFilters();
+        displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
       } else {
         updateStatus('Failed to show sprints', false);
       }
 
       // Update button states after action completes
-      updateActionButtonStates();
+      updateActionButtonStates(tab.id);
     });
   });
 
