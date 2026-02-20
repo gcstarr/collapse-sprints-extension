@@ -1,30 +1,46 @@
 // Debug logging helper
 let debugModeEnabled = false;
 
-// Load debug mode from storage
-chrome.storage.local.get('debugMode', (data) => {
-  debugModeEnabled = data.debugMode || false;
-  debugLog('Content script loaded, debug mode:', debugModeEnabled);
-});
-
-// Listen for debug mode changes
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.debugMode) {
-    debugModeEnabled = changes.debugMode.newValue;
-    // Always log debug mode changes (even when disabling) so user can see the change
-    console.log('[Sprint Collapser] Debug mode changed to:', debugModeEnabled);
-  }
-});
-
 function debugLog(...args) {
   if (debugModeEnabled) {
     console.log('[Sprint Collapser]', ...args);
   }
 }
 
+// Guard chrome API calls so this module can be imported in tests
+if (typeof chrome !== 'undefined' && chrome.storage) {
+  // Load debug mode from storage on script initialization
+  chrome.storage.local.get(['debugMode', 'currentFilter'], (data) => {
+    debugModeEnabled = data.debugMode || false;
+    debugLog('Content script loaded, debug mode:', debugModeEnabled);
+    debugLog('Content script loaded and ready!');
+    if (data.currentFilter) {
+      debugLog('Restoring filter on page load:', data.currentFilter);
+      waitForSprintsAndFilter(data.currentFilter);
+    }
+  });
+
+  // Listen for debug mode changes
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.debugMode) {
+      debugModeEnabled = changes.debugMode.newValue;
+      // Always log debug mode changes so user can see the change
+      console.log('[Sprint Collapser] Debug mode changed to:', debugModeEnabled);
+    }
+  });
+}
+
+// Helper to check if a sprint is filtered (hidden) by the current filter
+function isSprintFiltered(button) {
+  const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
+  const outerContainer = innerContainer?.parentElement;
+  return outerContainer?.getAttribute('data-filtered-hidden') === 'true';
+}
+
 // Function to find all sprint toggle buttons
 function findSprintToggleButtons() {
   // Look for the specific sprint toggle elements by their data-testid
+  // NOTE: This selector depends on Jira's internal test IDs which can change on updates.
   const toggleButtons = document.querySelectorAll(
     'div[role="button"][data-testid="software-backlog.card-list.left-side"]'
   );
@@ -34,145 +50,104 @@ function findSprintToggleButtons() {
   return Array.from(toggleButtons);
 }
 
-// Function to collapse all sprints
-function collapseAllSprints() {
-  const buttons = findSprintToggleButtons();
-  
-  if (buttons.length === 0) {
-    debugLog('No sprint headers found');
-    return { success: false, message: 'No sprints found' };
-  }
-  
-  // Count how many will be collapsed upfront (before batching starts)
-  let willCollapseCount = 0;
-  buttons.forEach((button) => {
-    // Check if the sprint is filtered (hidden)
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    // Check if the sprint is expanded
-    const isExpanded = button.getAttribute('aria-expanded') === 'true';
-    if (isExpanded) {
-      willCollapseCount++;
-    }
-  });
-
-  // Batch clicks using requestAnimationFrame for better performance
-  let buttonIndex = 0;
-  
-  const processBatch = () => {
-    // Process up to 10 buttons per frame
-    const batchSize = 10;
-    const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
-    
-    for (let i = buttonIndex; i < endIndex; i++) {
-      const button = buttons[i];
-      
-      // Check if the sprint is filtered (hidden)
-      const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-      const outerContainer = innerContainer?.parentElement;
-      if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-        continue;
-      }
-
-      // Check if the sprint is expanded
-      const isExpanded = button.getAttribute('aria-expanded') === 'true';
-
-      if (isExpanded) {
-        button.click();
-      }
-    }
-    
-    buttonIndex = endIndex;
-    
-    // Process more buttons if any remain
-    if (buttonIndex < buttons.length) {
-      requestAnimationFrame(processBatch);
-    }
-  };
-  
-  // Start batching
-  requestAnimationFrame(processBatch);
-
-  debugLog(`Collapsed ${willCollapseCount} sprints`);
-  return { success: true, message: `Collapsed ${willCollapseCount} sprint${willCollapseCount !== 1 ? 's' : ''}` };
-}
-
-// Function to expand all sprints
-function expandAllSprints() {
+// Function to collapse all sprints.
+// onComplete(result) is called asynchronously after all batch clicks have been fired.
+function collapseAllSprints(onComplete) {
   const buttons = findSprintToggleButtons();
 
   if (buttons.length === 0) {
     debugLog('No sprint headers found');
-    return { success: false, message: 'No sprints found' };
+    const result = { success: false, message: 'No sprints found' };
+    if (onComplete) onComplete(result);
+    return;
   }
 
-  // Count how many will be expanded upfront (before batching starts)
-  let willExpandCount = 0;
-  buttons.forEach((button) => {
-    // Check if the sprint is filtered (hidden)
-    const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-    const outerContainer = innerContainer?.parentElement;
-    if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-      return;
-    }
-
-    // Check if the sprint is collapsed
-    const isCollapsed = button.getAttribute('aria-expanded') === 'false';
-    if (isCollapsed) {
-      willExpandCount++;
-    }
-  });
-
-  // Batch clicks using requestAnimationFrame for better performance
+  let collapsedCount = 0;
   let buttonIndex = 0;
-  
+
   const processBatch = () => {
-    // Process up to 10 buttons per frame
     const batchSize = 10;
     const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
-    
+
     for (let i = buttonIndex; i < endIndex; i++) {
       const button = buttons[i];
-      
-      // Check if the sprint is filtered (hidden)
-      const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
-      const outerContainer = innerContainer?.parentElement;
-      if (outerContainer?.getAttribute('data-filtered-hidden') === 'true') {
-        continue;
-      }
+      if (isSprintFiltered(button)) continue;
 
-      // Check if the sprint is collapsed
-      const isCollapsed = button.getAttribute('aria-expanded') === 'false';
-
-      if (isCollapsed) {
+      if (button.getAttribute('aria-expanded') === 'true') {
         button.click();
+        collapsedCount++;
       }
     }
-    
+
     buttonIndex = endIndex;
-    
-    // Process more buttons if any remain
+
     if (buttonIndex < buttons.length) {
       requestAnimationFrame(processBatch);
+    } else {
+      const result = {
+        success: true,
+        message: `Collapsed ${collapsedCount} sprint${collapsedCount !== 1 ? 's' : ''}`
+      };
+      debugLog(`Collapsed ${collapsedCount} sprints`);
+      if (onComplete) onComplete(result);
     }
   };
-  
-  // Start batching
-  requestAnimationFrame(processBatch);
 
-  debugLog(`Expanded ${willExpandCount} sprints`);
-  return { success: true, message: `Expanded ${willExpandCount} sprint${willExpandCount !== 1 ? 's' : ''}` };
+  requestAnimationFrame(processBatch);
 }
 
+// Function to expand all sprints.
+// onComplete(result) is called asynchronously after all batch clicks have been fired.
+function expandAllSprints(onComplete) {
+  const buttons = findSprintToggleButtons();
 
+  if (buttons.length === 0) {
+    debugLog('No sprint headers found');
+    const result = { success: false, message: 'No sprints found' };
+    if (onComplete) onComplete(result);
+    return;
+  }
+
+  let expandedCount = 0;
+  let buttonIndex = 0;
+
+  const processBatch = () => {
+    const batchSize = 10;
+    const endIndex = Math.min(buttonIndex + batchSize, buttons.length);
+
+    for (let i = buttonIndex; i < endIndex; i++) {
+      const button = buttons[i];
+      if (isSprintFiltered(button)) continue;
+
+      if (button.getAttribute('aria-expanded') === 'false') {
+        button.click();
+        expandedCount++;
+      }
+    }
+
+    buttonIndex = endIndex;
+
+    if (buttonIndex < buttons.length) {
+      requestAnimationFrame(processBatch);
+    } else {
+      const result = {
+        success: true,
+        message: `Expanded ${expandedCount} sprint${expandedCount !== 1 ? 's' : ''}`
+      };
+      debugLog(`Expanded ${expandedCount} sprints`);
+      if (onComplete) onComplete(result);
+    }
+  };
+
+  requestAnimationFrame(processBatch);
+}
 
 // Function to filter sprints by name
 function filterSprints(filterText) {
-  // Find all sprint containers (the parent of the toggle button)
+  if (!filterText) {
+    return { success: false, message: 'No filter text provided' };
+  }
+
   const toggleButtons = findSprintToggleButtons();
 
   if (toggleButtons.length === 0) {
@@ -183,27 +158,22 @@ function filterSprints(filterText) {
   let shownCount = 0;
 
   toggleButtons.forEach((button) => {
-    // Find the sprint container (go up to the root sprint element)
     const innerContainer = button.closest('div[data-drop-target-for-element="true"]');
     if (!innerContainer) return;
 
-    // Find the outer container (the one with the testid)
     const outerContainer = innerContainer.parentElement;
     if (!outerContainer) return;
 
-    // Find the sprint name within the container
+    // NOTE: This relies on Jira rendering sprint names in an h2 element.
     const sprintNameElement = innerContainer.querySelector('h2');
     const sprintName = sprintNameElement ? sprintNameElement.textContent : '';
 
-    // Check if sprint name matches the filter (case-insensitive)
     const matches = sprintName.toLowerCase().includes(filterText.toLowerCase());
 
     if (matches) {
-      // Show this sprint
       outerContainer.style.display = '';
       outerContainer.removeAttribute('data-filtered-hidden');
 
-      // Show associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         nextSibling.style.display = '';
@@ -218,11 +188,9 @@ function filterSprints(filterText) {
 
       shownCount++;
     } else {
-      // Hide this sprint
       outerContainer.style.display = 'none';
       outerContainer.setAttribute('data-filtered-hidden', 'true');
 
-      // Hide associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         nextSibling.style.display = 'none';
@@ -267,7 +235,6 @@ function showAllSprints() {
       outerContainer.style.display = '';
       outerContainer.removeAttribute('data-filtered-hidden');
 
-      // Restore associated dividers (both before and after)
       const nextSibling = outerContainer.nextElementSibling;
       if (nextSibling && nextSibling.getAttribute('data-testid') === 'software-backlog.card-list.divider.container') {
         if (nextSibling.getAttribute('data-filtered-hidden') === 'true') {
@@ -295,6 +262,21 @@ function showAllSprints() {
   };
 }
 
+// Nudges the backlog scroll container by 1px and restores it to force virtual-list
+// re-render. Jira's backlog cards are windowed; after hiding sprint containers with
+// display:none the card virtual lists don't re-render until a scroll event fires on
+// the correct scroll container (not window). The defer gives React time to process
+// the display:none mutations before the scroll event triggers re-measurement.
+function triggerVirtualListRefresh() {
+  const container = document.querySelector('[data-testid="software-backlog.backlog-content.scrollable"]');
+  if (!container) return;
+  setTimeout(() => {
+    const saved = container.scrollTop;
+    container.scrollTop = saved + 1;
+    requestAnimationFrame(() => { container.scrollTop = saved; });
+  }, 50);
+}
+
 // Function to check current sprint state
 function getSprintState() {
   const buttons = findSprintToggleButtons();
@@ -306,8 +288,14 @@ function getSprintState() {
   let collapsedCount = 0;
   let expandedCount = 0;
   let unknownCount = 0;
+  let visibleCount = 0;
 
+  // Only count visible (non-filtered) sprints for allCollapsed/allExpanded so that
+  // collapse/expand buttons disable correctly when a filter is active.
   buttons.forEach((button) => {
+    if (isSprintFiltered(button)) return;
+
+    visibleCount++;
     const ariaExpanded = button.getAttribute('aria-expanded');
     if (ariaExpanded === 'false') {
       collapsedCount++;
@@ -320,88 +308,95 @@ function getSprintState() {
     }
   });
 
-  debugLog(`State counts - Collapsed: ${collapsedCount}, Expanded: ${expandedCount}, Unknown: ${unknownCount}, Total: ${buttons.length}`);
+  debugLog(`State counts - Collapsed: ${collapsedCount}, Expanded: ${expandedCount}, Unknown: ${unknownCount}, Visible: ${visibleCount}, Total: ${buttons.length}`);
 
-  // Check if any sprints are filtered (hidden)
   const anyFiltered = document.querySelector('[data-filtered-hidden="true"]') !== null;
 
   return {
-    allCollapsed: collapsedCount === buttons.length && expandedCount === 0,
-    allExpanded: expandedCount === buttons.length && collapsedCount === 0,
+    allCollapsed: visibleCount > 0 && collapsedCount === visibleCount && expandedCount === 0,
+    allExpanded: visibleCount > 0 && expandedCount === visibleCount && collapsedCount === 0,
     anyFiltered: anyFiltered
   };
 }
 
-// Content script is loaded
-debugLog('Content script loaded and ready!');
+// Waits for sprint toggle buttons to appear in the DOM, then applies the filter.
+// Used on page load/refresh when Jira's SPA hasn't rendered sprints yet.
+function waitForSprintsAndFilter(filterText) {
+  const applyAndRefresh = () => {
+    filterSprints(filterText);
+    // Jira mounts card virtual lists asynchronously after sprint buttons appear.
+    // Retry the scroll nudge at increasing intervals so at least one fires after
+    // those IntersectionObservers are set up.
+    triggerVirtualListRefresh();
+    setTimeout(() => triggerVirtualListRefresh(), 500);
+    setTimeout(() => triggerVirtualListRefresh(), 1500);
+  };
+
+  if (findSprintToggleButtons().length > 0) {
+    applyAndRefresh();
+    return;
+  }
+
+  const observer = new MutationObserver(() => {
+    if (findSprintToggleButtons().length > 0) {
+      observer.disconnect();
+      applyAndRefresh();
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+  // Safety valve: don't observe indefinitely if the page never renders sprints
+  setTimeout(() => observer.disconnect(), 15000);
+}
 
 // Listen for messages from the popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  try {
-    debugLog('Received message:', request.action);
-    
-    if (request.action === 'collapseAllSprints') {
-      const result = collapseAllSprints();
-      debugLog('Collapse result:', result);
-      sendResponse(result);
-    } else if (request.action === 'expandAllSprints') {
-      const result = expandAllSprints();
-      debugLog('Expand result:', result);
-      sendResponse(result);
-    } else if (request.action === 'filterSprints') {
-      const result = filterSprints(request.filter);
-      debugLog('Filter result:', result);
-      sendResponse(result);
-    } else if (request.action === 'showAllSprints') {
-      const result = showAllSprints();
-      debugLog('Show all result:', result);
-      sendResponse(result);
-    } else if (request.action === 'checkPageSupport') {
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  // Actions that call sendResponse asynchronously — listener must return true for these
+  // to keep the message channel open.
+  const asyncActions = new Set(['collapseAllSprints', 'expandAllSprints']);
+
+  const messageHandlers = {
+    collapseAllSprints: (_request, sendResponse) => { collapseAllSprints(sendResponse); },
+    expandAllSprints:   (_request, sendResponse) => { expandAllSprints(sendResponse); },
+    filterSprints:      (request, sendResponse)  => { const result = filterSprints(request.filter); triggerVirtualListRefresh(); sendResponse(result); },
+    showAllSprints:     (_request, sendResponse) => { sendResponse(showAllSprints()); },
+    checkPageSupport:   (_request, sendResponse) => {
       debugLog('Page support check - responding with supported: true');
       sendResponse({ supported: true });
-    } else if (request.action === 'getSprintState') {
+    },
+    getSprintState: (_request, sendResponse) => {
       const state = getSprintState();
       debugLog('Sprint state:', state);
       sendResponse(state);
-    }
-  } catch (error) {
-    console.error('[Sprint Collapser] Error handling message:', error);
-    sendResponse({ success: false, message: 'Error: ' + error.message });
-  }
-});
+    },
+  };
 
-// Add a button to the page (optional: for direct access without popup)
-function addPageButton() {
-  const backlogTab = document.querySelector('[href*="backlog"]');
-  if (backlogTab && !document.getElementById('collapse-all-button')) {
-    const button = document.createElement('button');
-    button.id = 'collapse-all-button';
-    button.textContent = 'Collapse All Sprints';
-    button.style.marginLeft = '10px';
-    button.style.padding = '8px 12px';
-    button.style.backgroundColor = '#0052cc';
-    button.style.color = 'white';
-    button.style.border = 'none';
-    button.style.borderRadius = '4px';
-    button.style.cursor = 'pointer';
-    button.style.fontSize = '14px';
-    
-    button.addEventListener('click', collapseAllSprints);
-    
-    // Try to append to the toolbar area
-    const toolbar = document.querySelector('[role="toolbar"]') || 
-                   document.querySelector('.toolbar') ||
-                   document.querySelector('.aui-buttons');
-    
-    if (toolbar) {
-      toolbar.appendChild(button);
+  
+
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    debugLog('Received message:', request.action);
+    const handler = messageHandlers[request.action];
+    if (!handler) return;
+    try {
+      handler(request, sendResponse);
+    } catch (error) {
+      console.error('[Sprint Collapser] Error handling message:', error);
+      sendResponse({ success: false, message: 'Error: ' + error.message });
     }
-  }
+    return asyncActions.has(request.action);
+  });
 }
 
-// Run when page loads
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', addPageButton);
-} else {
-  addPageButton();
+// Export functions for unit testing (CommonJS)
+if (typeof module !== 'undefined') {
+  module.exports = {
+    findSprintToggleButtons,
+    collapseAllSprints,
+    expandAllSprints,
+    filterSprints,
+    showAllSprints,
+    getSprintState,
+    triggerVirtualListRefresh,
+    waitForSprintsAndFilter,
+  };
 }
