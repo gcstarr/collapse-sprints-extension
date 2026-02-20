@@ -3,35 +3,31 @@
  * Tests core sprint manipulation and state detection functions
  */
 
-// Mock DOM setup for testing
-function setupMockDOM() {
-  document.body.innerHTML = '';
-  
-  const createSprintButton = (id, ariaExpanded, isFiltered = false) => {
-    const outer = document.createElement('div');
-    outer.setAttribute('data-filtered-hidden', isFiltered ? 'true' : 'false');
-    
-    const inner = document.createElement('div');
-    inner.setAttribute('data-drop-target-for-element', 'true');
-    
-    const button = document.createElement('div');
-    button.setAttribute('role', 'button');
-    button.setAttribute('data-testid', 'software-backlog.card-list.left-side');
+// Mock DOM helper for testing
+function createSprintButton(id, ariaExpanded = null, isFiltered = false) {
+  const outer = document.createElement('div');
+  outer.setAttribute('data-filtered-hidden', isFiltered ? 'true' : 'false');
+
+  const inner = document.createElement('div');
+  inner.setAttribute('data-drop-target-for-element', 'true');
+
+  const button = document.createElement('div');
+  button.setAttribute('role', 'button');
+  button.setAttribute('data-testid', 'software-backlog.card-list.left-side');
+  if (ariaExpanded !== null) {
     button.setAttribute('aria-expanded', ariaExpanded);
-    button.id = id;
-    
-    const sprintName = document.createElement('h2');
-    sprintName.textContent = id.replace('sprint-', 'Sprint ');
-    
-    inner.appendChild(button);
-    inner.appendChild(sprintName);
-    outer.appendChild(inner);
-    document.body.appendChild(outer);
-    
-    return { outer, button };
-  };
-  
-  return createSprintButton;
+  }
+  button.id = id;
+
+  const sprintName = document.createElement('h2');
+  sprintName.textContent = id.replace('sprint-', 'Sprint ');
+
+  inner.appendChild(button);
+  inner.appendChild(sprintName);
+  outer.appendChild(inner);
+  document.body.appendChild(outer);
+
+  return outer;
 }
 
 // Functions extracted from content.js for testing
@@ -103,17 +99,12 @@ function getSprintState() {
 
   let collapsedCount = 0;
   let expandedCount = 0;
-  let unknownCount = 0;
-
   buttons.forEach((button) => {
     const ariaExpanded = button.getAttribute('aria-expanded');
     if (ariaExpanded === 'false') {
       collapsedCount++;
     } else if (ariaExpanded === 'true') {
       expandedCount++;
-    } else {
-      // Attribute is null or has unexpected value
-      unknownCount++;
     }
   });
 
@@ -135,10 +126,10 @@ describe('Sprint Collapser Content Script', () => {
 
   describe('findSprintToggleButtons', () => {
     test('should find all sprint toggle buttons', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true');
-      createSprintButton('sprint-2', 'false');
-      createSprintButton('sprint-3', 'true');
+
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', false);
+      createSprintButton('sprint-3', true);
 
       const buttons = findSprintToggleButtons();
       expect(buttons).toHaveLength(3);
@@ -152,9 +143,9 @@ describe('Sprint Collapser Content Script', () => {
 
   describe('collapseAllSprints', () => {
     test('should collapse all expanded sprints', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true');
-      createSprintButton('sprint-2', 'true');
+
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
 
       const result = collapseAllSprints();
       expect(result.success).toBe(true);
@@ -167,18 +158,18 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should return disabled if all sprints already collapsed', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'false');
-      createSprintButton('sprint-2', 'false');
+
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
 
       const result = collapseAllSprints();
       expect(result.message).toBe('Collapsed 0 sprints');
     });
 
     test('[REGRESSION] should skip filtered sprints when collapsing', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true', false);  // visible, expanded
-      createSprintButton('sprint-2', 'true', true);   // filtered/hidden, expanded
+
+      createSprintButton('sprint-1', true, false);  // visible, expanded
+      createSprintButton('sprint-2', true, true);   // filtered/hidden, expanded
 
       const result = collapseAllSprints();
       
@@ -201,9 +192,9 @@ describe('Sprint Collapser Content Script', () => {
 
   describe('expandAllSprints', () => {
     test('should expand all collapsed sprints', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'false');
-      createSprintButton('sprint-2', 'false');
+
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
 
       const result = expandAllSprints();
       expect(result.success).toBe(true);
@@ -216,9 +207,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should skip filtered sprints when expanding', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'false', false);  // visible, collapsed
-      createSprintButton('sprint-2', 'false', true);   // filtered/hidden, collapsed
+
+      createSprintButton('sprint-1', false, false);  // visible, collapsed
+      createSprintButton('sprint-2', false, true);   // filtered/hidden, collapsed
 
       const result = expandAllSprints();
       
@@ -233,20 +224,20 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should not show dividers for filtered sprints', () => {
-      const createSprintButton = setupMockDOM();
-      const { outer: outer1 } = createSprintButton('sprint-1', 'false', false);
-      const { outer: outer2 } = createSprintButton('sprint-2', 'false', true);
+
+      createSprintButton('sprint-1', false, false);
+      const filteredSprint = createSprintButton('sprint-2', false, true);
 
       expandAllSprints();
 
       // Filtered sprint should still have data-filtered-hidden='true'
-      expect(outer2.getAttribute('data-filtered-hidden')).toBe('true');
+      expect(filteredSprint.getAttribute('data-filtered-hidden')).toBe('true');
     });
 
     test('should return disabled if all sprints already expanded', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true');
-      createSprintButton('sprint-2', 'true');
+
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
 
       const result = expandAllSprints();
       expect(result.message).toBe('Expanded 0 sprints');
@@ -255,9 +246,9 @@ describe('Sprint Collapser Content Script', () => {
 
   describe('getSprintState', () => {
     test('should detect when all sprints are collapsed', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'false');
-      createSprintButton('sprint-2', 'false');
+
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
 
       const state = getSprintState();
       expect(state.allCollapsed).toBe(true);
@@ -265,9 +256,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect when all sprints are expanded', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true');
-      createSprintButton('sprint-2', 'true');
+
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
 
       const state = getSprintState();
       expect(state.allCollapsed).toBe(false);
@@ -275,9 +266,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect mixed sprint states', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true');
-      createSprintButton('sprint-2', 'false');
+
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', false);
 
       const state = getSprintState();
       expect(state.allCollapsed).toBe(false);
@@ -285,18 +276,18 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('should detect when sprints are filtered', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true', false);
-      createSprintButton('sprint-2', 'true', true);  // filtered
+
+      createSprintButton('sprint-1', true, false);
+      createSprintButton('sprint-2', true, true);  // filtered
 
       const state = getSprintState();
       expect(state.anyFiltered).toBe(true);
     });
 
     test('[REGRESSION] should correctly identify allExpanded state with filtered sprints', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true', false);   // visible, expanded
-      createSprintButton('sprint-2', 'false', true);   // filtered, collapsed
+
+      createSprintButton('sprint-1', true, false);   // visible, expanded
+      createSprintButton('sprint-2', false, true);   // filtered, collapsed
 
       const state = getSprintState();
       // Should be false because not ALL sprints (including filtered ones) are expanded
@@ -315,9 +306,9 @@ describe('Sprint Collapser Content Script', () => {
 
   describe('Regression Tests', () => {
     test('[REGRESSION] hide dividers when filtering with expanded sprints', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true', false);
-      createSprintButton('sprint-2', 'true', true);  // This should be hidden with dividers
+
+      createSprintButton('sprint-1', true, false);
+      createSprintButton('sprint-2', true, true);  // This should be hidden with dividers
 
       expandAllSprints();
 
@@ -331,9 +322,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] button state reflects correct disabled status', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'false', false);
-      createSprintButton('sprint-2', 'false', false);
+
+      createSprintButton('sprint-1', false, false);
+      createSprintButton('sprint-2', false, false);
 
       const state = getSprintState();
 
@@ -343,9 +334,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] all sprints expanded state with only filtered sprints', () => {
-      const createSprintButton = setupMockDOM();
-      createSprintButton('sprint-1', 'true', true);  // Only filtered sprint, expanded
-      createSprintButton('sprint-2', 'true', true);  // Only filtered sprint, expanded
+
+      createSprintButton('sprint-1', true, true);  // Only filtered sprint, expanded
+      createSprintButton('sprint-2', true, true);  // Only filtered sprint, expanded
 
       const state = getSprintState();
 
@@ -357,36 +348,9 @@ describe('Sprint Collapser Content Script', () => {
   });
 
   describe('Sprint State Detection with Unknown Values', () => {
-    // Mock DOM setup that allows null aria-expanded
-    function createSprintButtonWithAriaValue(id, ariaValue, isFiltered = false) {
-      const outer = document.createElement('div');
-      outer.setAttribute('data-filtered-hidden', isFiltered ? 'true' : 'false');
-
-      const inner = document.createElement('div');
-      inner.setAttribute('data-drop-target-for-element', 'true');
-
-      const button = document.createElement('div');
-      button.setAttribute('role', 'button');
-      button.setAttribute('data-testid', 'software-backlog.card-list.left-side');
-      if (ariaValue !== null) {
-        button.setAttribute('aria-expanded', ariaValue);
-      }
-      button.id = id;
-
-      const sprintName = document.createElement('h2');
-      sprintName.textContent = id.replace('sprint-', 'Sprint ');
-
-      inner.appendChild(button);
-      inner.appendChild(sprintName);
-      outer.appendChild(inner);
-      document.body.appendChild(outer);
-
-      return { outer, button };
-    }
-
     test('[REGRESSION] should correctly count sprints with explicit true aria-expanded', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', 'true');
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
 
       const state = getSprintState();
 
@@ -395,8 +359,8 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should correctly count sprints with explicit false aria-expanded', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'false');
-      createSprintButtonWithAriaValue('sprint-2', 'false');
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
 
       const state = getSprintState();
 
@@ -405,8 +369,8 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should not count null aria-expanded as expanded', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', null);  // No aria-expanded attribute
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2');  // No aria-expanded attribute
 
       const state = getSprintState();
 
@@ -416,8 +380,8 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should not count null aria-expanded as collapsed', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'false');
-      createSprintButtonWithAriaValue('sprint-2', null);  // No aria-expanded attribute
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2');  // No aria-expanded attribute
 
       const state = getSprintState();
 
@@ -427,9 +391,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should handle mixed states with unknown values', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', 'false');
-      createSprintButtonWithAriaValue('sprint-3', null);
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', false);
+      createSprintButton('sprint-3');
 
       const state = getSprintState();
 
@@ -438,8 +402,8 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should handle all unknown values gracefully', () => {
-      createSprintButtonWithAriaValue('sprint-1', null);
-      createSprintButtonWithAriaValue('sprint-2', null);
+      createSprintButton('sprint-1');
+      createSprintButton('sprint-2');
 
       const state = getSprintState();
 
@@ -449,8 +413,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] should handle unexpected aria-expanded values', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', 'maybe');  // Invalid value
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2');
+      findSprintToggleButtons()[1].setAttribute('aria-expanded', 'maybe');  // Invalid value
 
       const state = getSprintState();
 
@@ -460,9 +425,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] Expand All button should be disabled only when ALL sprints are explicitly expanded', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', 'true');
-      createSprintButtonWithAriaValue('sprint-3', 'true');
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
+      createSprintButton('sprint-3', true);
 
       const state = getSprintState();
 
@@ -471,9 +436,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] Expand All button should NOT be disabled when some sprints have unknown state', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'true');
-      createSprintButtonWithAriaValue('sprint-2', 'true');
-      createSprintButtonWithAriaValue('sprint-3', null);  // Unknown state
+      createSprintButton('sprint-1', true);
+      createSprintButton('sprint-2', true);
+      createSprintButton('sprint-3');  // Unknown state
 
       const state = getSprintState();
 
@@ -482,9 +447,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] Collapse All button should be disabled only when ALL sprints are explicitly collapsed', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'false');
-      createSprintButtonWithAriaValue('sprint-2', 'false');
-      createSprintButtonWithAriaValue('sprint-3', 'false');
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
+      createSprintButton('sprint-3', false);
 
       const state = getSprintState();
 
@@ -493,9 +458,9 @@ describe('Sprint Collapser Content Script', () => {
     });
 
     test('[REGRESSION] Collapse All button should NOT be disabled when some sprints have unknown state', () => {
-      createSprintButtonWithAriaValue('sprint-1', 'false');
-      createSprintButtonWithAriaValue('sprint-2', 'false');
-      createSprintButtonWithAriaValue('sprint-3', null);  // Unknown state
+      createSprintButton('sprint-1', false);
+      createSprintButton('sprint-2', false);
+      createSprintButton('sprint-3');  // Unknown state
 
       const state = getSprintState();
 

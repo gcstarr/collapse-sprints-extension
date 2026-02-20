@@ -39,7 +39,7 @@ function debugLog(...args) {
 }
 
 // Helper to wait for batching to complete
-async function waitForBatchingComplete(expectedState) {
+async function waitForBatchingComplete() {
   // With 113 buttons at 10/frame, we need time for:
   // 1. All clicks to be processed (113/10 = ~12 frames)
   // 2. Jira's React to reconcile the DOM changes
@@ -340,7 +340,7 @@ async function applyFilter() {
       updateStatus(response.message, response.success);
 
       // Only save to CURRENT_FILTER_KEY if it's a saved filter
-      const data = chrome.storage.local.get(SAVED_FILTERS_KEY, (result) => {
+      chrome.storage.local.get(SAVED_FILTERS_KEY, (result) => {
         const savedFilters = result[SAVED_FILTERS_KEY] || [];
         if (!savedFilters.includes(filterText)) {
           // Custom filter - clear CURRENT_FILTER_KEY so no chip appears selected
@@ -521,9 +521,9 @@ function isUrlSupported(url) {
   if (!url) return false;
 
   const patterns = [
-    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
-    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
-    /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/backlog/
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/backlog/
   ];
 
   return patterns.some(pattern => pattern.test(url));
