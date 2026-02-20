@@ -301,8 +301,9 @@ describe('Sprint Collapser Content Script', () => {
       createSprintButton('sprint-2', false, true);   // filtered, collapsed
 
       const state = getSprintState();
-      // Should be false because not ALL sprints (including filtered ones) are expanded
-      expect(state.allExpanded).toBe(false);
+      // Only visible sprints count: sprint-1 is expanded, so allExpanded = true.
+      // The filtered sprint-2 is not considered for the allExpanded flag.
+      expect(state.allExpanded).toBe(true);
       expect(state.anyFiltered).toBe(true);
     });
 
