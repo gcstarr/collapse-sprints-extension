@@ -6,26 +6,6 @@
 // Mock localStorage for testing
 const mockStorage = {};
 
-const mockChromeStorage = {
-  local: {
-    get: jest.fn((key, callback) => {
-      console.log('Mock get called with:', key);
-      if (typeof key === 'string') {
-        callback({ [key]: mockStorage[key] });
-      } else if (Array.isArray(key)) {
-        const result = {};
-        key.forEach(k => {
-          result[k] = mockStorage[k];
-        });
-        callback(result);
-      }
-    }),
-    set: jest.fn((obj, callback) => {
-      Object.assign(mockStorage, obj);
-      if (callback) callback();
-    }),
-  },
-};
 
 describe('Sprint Collapser Popup Functions', () => {
   const SAVED_FILTERS_KEY = 'savedFilters';
@@ -322,7 +302,7 @@ describe('Sprint Collapser Popup Functions', () => {
       const btn = document.getElementById('collapseBtn');
       btn.disabled = true;
 
-      const computedStyle = window.getComputedStyle(btn);
+      window.getComputedStyle(btn);
       // Note: This test verifies the style was applied, actual color testing is better in E2E
       expect(btn.disabled).toBe(true);
     });
@@ -461,7 +441,6 @@ describe('Sprint Collapser Popup Functions', () => {
   describe('Spinner Animations', () => {
     test('[REGRESSION] button should display spinner during operation', () => {
       const btn = document.getElementById('collapseBtn');
-      const originalText = btn.textContent;
 
       // Simulate operation starting
       btn.innerHTML = '<span class="spinner"></span>Collapsing...';
@@ -706,9 +685,9 @@ describe('Sprint Collapser Popup Functions', () => {
       if (!url) return false;
 
       const patterns = [
-        /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
-        /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/,
-        /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/[^\/]+\/backlog/
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/backlog/
       ];
 
       return patterns.some(pattern => pattern.test(url));
@@ -762,7 +741,6 @@ describe('Sprint Collapser Popup Functions', () => {
   describe('Page Support Error Messages', () => {
     test('[REGRESSION] should show generic error when URL does not match pattern', () => {
       const statusDiv = document.getElementById('status');
-      const url = 'https://example.com';
 
       // Simulate unsupported URL check
       const isSupported = false; // URL check failed
@@ -778,7 +756,6 @@ describe('Sprint Collapser Popup Functions', () => {
 
     test('[REGRESSION] should show different error when URL matches but content script not loaded', () => {
       const statusDiv = document.getElementById('status');
-      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
 
       // Simulate supported URL but no content script response
       const isUrlSupported = true;
@@ -832,8 +809,6 @@ describe('Sprint Collapser Popup Functions', () => {
 
   describe('Tab Navigation Scenarios', () => {
     test('[REGRESSION] navigating from non-Jira to Jira page should allow popup to work', () => {
-      const statusDiv = document.getElementById('status');
-
       // Scenario 1: User on non-Jira page
       let currentUrl = 'https://example.com';
       let isSupported = currentUrl.includes('atlassian.net') && currentUrl.includes('backlog');
@@ -851,14 +826,12 @@ describe('Sprint Collapser Popup Functions', () => {
     });
 
     test('[REGRESSION] opening popup on Jira page should check current URL, not cached state', () => {
-      const statusDiv = document.getElementById('status');
-
       // Simulate popup opening - should always check current tab URL
       const getCurrentTabUrl = () => 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
 
       const currentUrl = getCurrentTabUrl();
       const patterns = [
-        /^https:\/\/[^\/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^\/]+\/boards\/[^\/]+\/backlog/
+        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/
       ];
 
       const isCurrentlySupported = patterns.some(pattern => pattern.test(currentUrl));
