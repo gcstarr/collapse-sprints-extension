@@ -174,6 +174,16 @@ h3 {
 .save-filter-btn:hover {
   border-color: #0052cc;
   background-color: #f0f5ff;
+  animation: none;
+}
+
+@keyframes save-btn-pulse {
+  0%, 100% { background-color: #f8f9fa; border-color: #dfe1e6; }
+  50% { background-color: #dae8ff; border-color: #4c9aff; }
+}
+
+.save-filter-btn.pulsing {
+  animation: save-btn-pulse 1.8s ease-in-out infinite;
 }
 
 .save-filter-btn.saved {

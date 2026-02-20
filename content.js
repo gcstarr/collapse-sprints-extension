@@ -10,10 +10,14 @@ function debugLog(...args) {
 // Guard chrome API calls so this module can be imported in tests
 if (typeof chrome !== 'undefined' && chrome.storage) {
   // Load debug mode from storage on script initialization
-  chrome.storage.local.get('debugMode', (data) => {
+  chrome.storage.local.get(['debugMode', 'currentFilter'], (data) => {
     debugModeEnabled = data.debugMode || false;
     debugLog('Content script loaded, debug mode:', debugModeEnabled);
     debugLog('Content script loaded and ready!');
+    if (data.currentFilter) {
+      debugLog('Restoring filter on page load:', data.currentFilter);
+      waitForSprintsAndFilter(data.currentFilter);
+    }
   });
 
   // Listen for debug mode changes
@@ -258,6 +262,21 @@ function showAllSprints() {
   };
 }
 
+// Nudges the backlog scroll container by 1px and restores it to force virtual-list
+// re-render. Jira's backlog cards are windowed; after hiding sprint containers with
+// display:none the card virtual lists don't re-render until a scroll event fires on
+// the correct scroll container (not window). The defer gives React time to process
+// the display:none mutations before the scroll event triggers re-measurement.
+function triggerVirtualListRefresh() {
+  const container = document.querySelector('[data-testid="software-backlog.backlog-content.scrollable"]');
+  if (!container) return;
+  setTimeout(() => {
+    const saved = container.scrollTop;
+    container.scrollTop = saved + 1;
+    requestAnimationFrame(() => { container.scrollTop = saved; });
+  }, 50);
+}
+
 // Function to check current sprint state
 function getSprintState() {
   const buttons = findSprintToggleButtons();
@@ -300,6 +319,36 @@ function getSprintState() {
   };
 }
 
+// Waits for sprint toggle buttons to appear in the DOM, then applies the filter.
+// Used on page load/refresh when Jira's SPA hasn't rendered sprints yet.
+function waitForSprintsAndFilter(filterText) {
+  const applyAndRefresh = () => {
+    filterSprints(filterText);
+    // Jira mounts card virtual lists asynchronously after sprint buttons appear.
+    // Retry the scroll nudge at increasing intervals so at least one fires after
+    // those IntersectionObservers are set up.
+    triggerVirtualListRefresh();
+    setTimeout(() => triggerVirtualListRefresh(), 500);
+    setTimeout(() => triggerVirtualListRefresh(), 1500);
+  };
+
+  if (findSprintToggleButtons().length > 0) {
+    applyAndRefresh();
+    return;
+  }
+
+  const observer = new MutationObserver(() => {
+    if (findSprintToggleButtons().length > 0) {
+      observer.disconnect();
+      applyAndRefresh();
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+  // Safety valve: don't observe indefinitely if the page never renders sprints
+  setTimeout(() => observer.disconnect(), 15000);
+}
+
 // Listen for messages from the popup
 if (typeof chrome !== 'undefined' && chrome.runtime) {
   // Actions that call sendResponse asynchronously — listener must return true for these
@@ -309,7 +358,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
   const messageHandlers = {
     collapseAllSprints: (_request, sendResponse) => { collapseAllSprints(sendResponse); },
     expandAllSprints:   (_request, sendResponse) => { expandAllSprints(sendResponse); },
-    filterSprints:      (request, sendResponse)  => { sendResponse(filterSprints(request.filter)); },
+    filterSprints:      (request, sendResponse)  => { const result = filterSprints(request.filter); triggerVirtualListRefresh(); sendResponse(result); },
     showAllSprints:     (_request, sendResponse) => { sendResponse(showAllSprints()); },
     checkPageSupport:   (_request, sendResponse) => {
       debugLog('Page support check - responding with supported: true');
