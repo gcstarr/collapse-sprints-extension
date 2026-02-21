@@ -13,6 +13,10 @@ coverage/
 *.swp
 *.swo
 
+# Scratch / temp files
+temp/
+temp*
+
 # OS
 .DS_Store
 Thumbs.db
