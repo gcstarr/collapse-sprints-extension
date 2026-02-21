@@ -3,7 +3,9 @@
 A Chrome extension that adds sprint management tools for Jira Cloud board backlogs. Collapse, expand, and filter sprints with one click when multiple teams share a board.
 
 ## Installation Instructions
-The extension is planned to be released on the Chrome Web Store, where it is currently pending review.
+
+### The Easy Way
+- Click `Add to Chrome` for the extension [at the Chrome Web Store](https://chromewebstore.google.com/detail/sprint-collapser/inecgmghjjoijgmhdjalefdlachblgni?authuser=0&hl=en).
 
 ### Manual Installation
 
@@ -30,27 +32,28 @@ The extension is planned to be released on the Chrome Web Store, where it is cur
 ## Features
 
 ### Sprint Controls
-- ✅ **Collapse All Sprints** - Collapse all expanded sprints at once
-- ✅ **Expand All Sprints** - Expand all collapsed sprints at once
+- **Collapse All Sprints** - Collapse all expanded sprints at once
+- **Expand All Sprints** - Expand all collapsed sprints at once
 
 ### Filter Sprints
-- ✅ **Filter by name** - Hide sprints that don't match your search
-- ✅ **Show All Sprints** - Restore hidden sprints
-- ✅ **Save Favorite Filters** - Click the star (☆) to save frequently-used filters (up to 10)
-- ✅ **One-click apply** - Click saved filters to instantly apply them
-- ✅ **Local storage** - Saved filters persist across browser sessions
+- **Filter by name** - Hide sprints that don't match your search
+- **Show All Sprints** - Restore hidden sprints
+- **Save Favorite Filters** - Click the star to save frequently-used filters (up to 10)
+- **One-click apply** - Click saved filters to instantly apply them
+- **Local storage** - Saved filters persist across browser sessions
 
 ## How to Use
 
 ### Collapse/Expand Sprints
 1. Click the extension icon
 2. Click "Collapse All Sprints" or "Expand All Sprints"
-3. Only visible (unfiltered) sprints are affected
+3. Only visible sprints are affected — if a filter is active, hidden sprints are left unchanged
 
 ### Filter Sprints
 1. Type a sprint name in the filter input (e.g., "Team A", "Backend")
 2. Click "Hide Non-Matching" to hide sprints that don't match
-3. Click "Show All Sprints" to restore hidden sprints
+3. Edit the input to re-enable "Hide Non-Matching" and apply a different filter without needing to show all sprints first
+4. Click "Show All Sprints" to restore hidden sprints
 
 ### Save Filters
 1. Type a sprint name in the filter input
@@ -95,21 +98,12 @@ npm test -- --coverage
 
 See [TESTING.md](TESTING.md) for detailed testing information.
 
-### Building for Chrome Store
-The version number in [manifest.json](manifest.json) is the source of truth for version. [package.json](package.json)'s version property is updated to match when the `build` script is run.
-
-```bash
-# Create production archive
-npm run build
-
-# Output: SprintCollapser_vX.Y.Z.zip (ready to submit)
-```
-
 ## Troubleshooting
 
 - **"This extension only works on Jira Cloud board backlog pages"**: Navigate to a Jira board's backlog view. The URL should contain `/backlog`
 - **Extension icon doesn't appear**: Reload the page or check you're on a supported Jira page
-- **Buttons are greyed out**: Sprints are already in that state (all collapsed/expanded/filtered)
+- **Collapse/Expand buttons are greyed out**: All visible sprints are already in that state
+- **"Hide Non-Matching" button is greyed out**: The input is empty, or the filter you've typed is already the active filter — edit the input to re-enable it
 - **Nothing happens when clicking buttons**: Check your browser console (F12) for errors
 
 ## License
