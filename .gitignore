@@ -13,6 +13,9 @@ coverage/
 *.swp
 *.swo
 
+# Local Claude context
+CLAUDE.md
+
 # Scratch / temp files
 temp/
 temp*

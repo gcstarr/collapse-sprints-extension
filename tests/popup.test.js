@@ -1,863 +1,515 @@
 /**
  * Unit tests for Sprint Collapser popup script
- * Tests filter saving, loading, and button state management
+ * Tests filter saving, loading, and button state management using real exported functions.
  */
 
-// Mock localStorage for testing
-const mockStorage = {};
+const BACKLOG_URL = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/1/backlog';
+const NON_BACKLOG_URL = 'https://example.atlassian.net/jira/boards';
 
+const POPUP_DOM = `
+  <div class="popup-container">
+    <button id="closeBtn" class="close-btn" title="Close">×</button>
+    <h2>Sprint Collapser</h2>
+    <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
+    <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
+    <div class="divider"></div>
+    <h3>Filter Sprints</h3>
+    <div class="filter-input-wrapper">
+      <input type="text" id="filterInput" class="filter-input" placeholder="Enter sprint name filter...">
+      <button id="saveFilterBtn" class="save-filter-btn" title="Save filter"></button>
+    </div>
+    <div id="savedFilters" class="saved-filters"></div>
+    <button id="filterBtn" class="action-button filter">Hide Non-Matching</button>
+    <button id="showAllBtn" class="action-button secondary">Show All Sprints</button>
+    <div id="status" class="status-message"></div>
+  </div>
+`;
 
+function setupChromeMocks() {
+  global.chrome = {
+    tabs: {
+      query: jest.fn((_, cb) => {
+        if (cb) cb([{ id: 1, url: BACKLOG_URL }]);
+      }),
+      sendMessage: jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+        else if (msg.action === 'checkPageSupport')
+          cb({ supported: true });
+        else if (cb)
+          cb({ success: true });
+      }),
+    },
+    storage: {
+      local: {
+        get: jest.fn(() => Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false })),
+        set: jest.fn(() => Promise.resolve()),
+      },
+    },
+    runtime: { lastError: null },
+  };
+}
+
+// -----------------------------------------------------------------------
 describe('Sprint Collapser Popup Functions', () => {
-  const SAVED_FILTERS_KEY = 'savedFilters';
-  const MAX_SAVED_FILTERS = 10;
+  let popup;
 
   beforeEach(() => {
-    // Clear mock storage
-    Object.keys(mockStorage).forEach(key => delete mockStorage[key]);
+    jest.resetModules();
     jest.clearAllMocks();
-
-    // Setup DOM
-    document.body.innerHTML = `
-      <div class="popup-container">
-        <button id="closeBtn" class="close-btn" title="Close">×</button>
-        <h2>Sprint Collapser</h2>
-        <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
-        <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
-        <div class="divider"></div>
-        <h3>Filter Sprints</h3>
-        <div class="filter-input-wrapper">
-          <input type="text" id="filterInput" class="filter-input" placeholder="Enter sprint name filter...">
-          <button id="saveFilterBtn" class="save-filter-btn" title="Save filter"></button>
-        </div>
-        <div id="savedFilters" class="saved-filters"></div>
-        <button id="filterBtn" class="action-button filter">Hide Non-Matching</button>
-        <button id="showAllBtn" class="action-button secondary">Show All Sprints</button>
-        <div id="status" class="status-message"></div>
-      </div>
-    `;
+    jest.useFakeTimers();
+    document.body.innerHTML = POPUP_DOM;
+    setupChromeMocks();
+    popup = require('../popup.js');
   });
 
-  describe('Save Filter Button Visibility', () => {
-    test('[REGRESSION] save button should be hidden when filter input is empty', () => {
-      const saveBtn = document.getElementById('saveFilterBtn');
-      const filterInput = document.getElementById('filterInput');
-      
-      filterInput.value = '';
-      saveBtn.style.display = 'none';
-      
-      expect(saveBtn.style.display).toBe('none');
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // -----------------------------------------------------------------------
+  describe('updateSaveButtonState', () => {
+    test('[REGRESSION] save button hidden when filter input is empty', () => {
+      document.getElementById('filterInput').value = '';
+      popup.updateSaveButtonState();
+      expect(document.getElementById('saveFilterBtn').style.display).toBe('none');
     });
 
-    test('[REGRESSION] save button should be visible when filter input has text', () => {
-      const saveBtn = document.getElementById('saveFilterBtn');
-      const filterInput = document.getElementById('filterInput');
-      
-      filterInput.value = 'Team A';
-      saveBtn.style.display = 'block';
-      
-      expect(saveBtn.style.display).toBe('block');
+    test('[REGRESSION] save button shows ☆ (unsaved state) when input has new text', () => {
+      document.getElementById('filterInput').value = 'Team A';
+      popup.updateSaveButtonState();
+      const btn = document.getElementById('saveFilterBtn');
+      expect(btn.style.display).toBe('block');
+      expect(btn.textContent).toBe('☆');
+      expect(btn.classList.contains('saved')).toBe(false);
     });
 
-    test('save button should toggle visibility with input changes', () => {
-      const saveBtn = document.getElementById('saveFilterBtn');
-      const filterInput = document.getElementById('filterInput');
-      
-      // Empty - hidden
-      filterInput.value = '';
-      saveBtn.style.display = 'none';
-      expect(saveBtn.style.display).toBe('none');
-      
-      // Has text - visible
-      filterInput.value = 'Sprint 1';
-      saveBtn.style.display = 'block';
-      expect(saveBtn.style.display).toBe('block');
-      
-      // Clear again - hidden
-      filterInput.value = '';
-      saveBtn.style.display = 'none';
-      expect(saveBtn.style.display).toBe('none');
+    test('[REGRESSION] save button shows ★ (saved state) when input matches a saved filter', async () => {
+      await popup.saveFilter('Team A'); // adds 'Team A' to cachedSavedFilters
+      document.getElementById('filterInput').value = 'Team A';
+      popup.updateSaveButtonState();
+      const btn = document.getElementById('saveFilterBtn');
+      expect(btn.textContent).toBe('★');
+      expect(btn.classList.contains('saved')).toBe(true);
+    });
+
+    test('[REGRESSION] save button has pulsing class when input has unsaved text', () => {
+      document.getElementById('filterInput').value = 'Team A';
+      popup.updateSaveButtonState();
+      expect(document.getElementById('saveFilterBtn').classList.contains('pulsing')).toBe(true);
+    });
+
+    test('[REGRESSION] save button does not have pulsing class when input matches a saved filter', async () => {
+      await popup.saveFilter('Team A');
+      document.getElementById('filterInput').value = 'Team A';
+      popup.updateSaveButtonState();
+      expect(document.getElementById('saveFilterBtn').classList.contains('pulsing')).toBe(false);
     });
   });
 
-  describe('Save Filter Functionality', () => {
-    test('should save a new filter', async () => {
-      mockStorage[SAVED_FILTERS_KEY] = [];
-      
-      const filterText = 'Team A';
-      let saved = mockStorage[SAVED_FILTERS_KEY] || [];
-      
-      if (!saved.includes(filterText)) {
-        saved.push(filterText);
+  // -----------------------------------------------------------------------
+  describe('saveFilter', () => {
+    test('saves a new filter and sorts the list alphabetically', async () => {
+      await popup.saveFilter('Team B');
+      await popup.saveFilter('Team A');
+      const calls = global.chrome.storage.local.set.mock.calls;
+      const lastSaved = calls[calls.length - 1][0].savedFilters;
+      expect(lastSaved).toEqual(['Team A', 'Team B']);
+    });
+
+    test('removes a filter that is already saved (toggle-off behaviour)', async () => {
+      await popup.saveFilter('Team A');
+      await popup.saveFilter('Team A'); // toggle off
+      const calls = global.chrome.storage.local.set.mock.calls;
+      const lastSaved = calls[calls.length - 1][0].savedFilters;
+      expect(lastSaved).toEqual([]);
+    });
+
+    test('rejects empty filter text without calling storage', async () => {
+      await popup.saveFilter('');
+      expect(global.chrome.storage.local.set).not.toHaveBeenCalled();
+    });
+
+    test('rejects whitespace-only filter text without calling storage', async () => {
+      await popup.saveFilter('   ');
+      expect(global.chrome.storage.local.set).not.toHaveBeenCalled();
+    });
+
+    test('rejects an 11th filter when MAX_SAVED_FILTERS (10) is reached', async () => {
+      for (let i = 1; i <= 10; i++) {
+        await popup.saveFilter(`Filter ${i}`);
       }
-      mockStorage[SAVED_FILTERS_KEY] = saved;
-      
-      expect(mockStorage[SAVED_FILTERS_KEY]).toContain('Team A');
-    });
-
-    test('should not save duplicate filters', async () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Backend'];
-      
-      const filterText = 'Team A';
-      let saved = mockStorage[SAVED_FILTERS_KEY];
-      
-      if (saved.includes(filterText)) {
-        saved = saved.filter(f => f !== filterText);
-      } else {
-        saved.push(filterText);
-      }
-      mockStorage[SAVED_FILTERS_KEY] = saved;
-      
-      // Should toggle off (remove)
-      expect(mockStorage[SAVED_FILTERS_KEY]).not.toContain('Team A');
-      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Backend']);
-    });
-
-    test('should respect MAX_SAVED_FILTERS limit', () => {
-      mockStorage[SAVED_FILTERS_KEY] = Array.from({ length: 10 }, (_, i) => `Filter ${i + 1}`);
-      
-      let saved = mockStorage[SAVED_FILTERS_KEY];
-      expect(saved.length).toBe(MAX_SAVED_FILTERS);
-      
-      // Attempt to add 11th should fail
-      const canAddMore = saved.length < MAX_SAVED_FILTERS;
-      expect(canAddMore).toBe(false);
-    });
-
-    test('should remove a saved filter', () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B', 'Backend'];
-      
-      const filterToRemove = 'Team B';
-      mockStorage[SAVED_FILTERS_KEY] = mockStorage[SAVED_FILTERS_KEY].filter(
-        f => f !== filterToRemove
-      );
-      
-      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Team A', 'Backend']);
-      expect(mockStorage[SAVED_FILTERS_KEY]).not.toContain('Team B');
+      const callsBefore = global.chrome.storage.local.set.mock.calls.length;
+      await popup.saveFilter('Filter 11');
+      expect(global.chrome.storage.local.set.mock.calls.length).toBe(callsBefore);
     });
   });
 
-  describe('Button Disabled States', () => {
-    test('[REGRESSION] Hide Non-Matching button should be disabled when filter is empty', () => {
-      const filterBtn = document.getElementById('filterBtn');
-      const filterInput = document.getElementById('filterInput');
-      
-      filterInput.value = '';
-      filterBtn.disabled = !filterInput.value.trim();
-      
-      expect(filterBtn.disabled).toBe(true);
+  // -----------------------------------------------------------------------
+  describe('removeSavedFilter', () => {
+    test('removes the specified filter from the saved list', async () => {
+      await popup.saveFilter('Team A');
+      await popup.saveFilter('Team B');
+      await popup.removeSavedFilter('Team A');
+      const calls = global.chrome.storage.local.set.mock.calls;
+      const lastSaved = calls[calls.length - 1][0].savedFilters;
+      expect(lastSaved).toEqual(['Team B']);
     });
 
-    test('[REGRESSION] Hide Non-Matching button should be enabled when filter has text', () => {
-      const filterBtn = document.getElementById('filterBtn');
-      const filterInput = document.getElementById('filterInput');
-      
-      filterInput.value = 'Team A';
-      filterBtn.disabled = !filterInput.value.trim();
-      
-      expect(filterBtn.disabled).toBe(false);
-    });
-
-    test('[REGRESSION] Collapse All button should be disabled when allCollapsed is true', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const sprintState = { allCollapsed: true, allExpanded: false, anyFiltered: false };
-      
-      collapseBtn.disabled = sprintState.allCollapsed;
-      
-      expect(collapseBtn.disabled).toBe(true);
-    });
-
-    test('[REGRESSION] Expand All button should be disabled when allExpanded is true', () => {
-      const expandBtn = document.getElementById('expandBtn');
-      const sprintState = { allCollapsed: false, allExpanded: true, anyFiltered: false };
-      
-      expandBtn.disabled = sprintState.allExpanded;
-      
-      expect(expandBtn.disabled).toBe(true);
-    });
-
-    test('[REGRESSION] Show All button should be disabled when anyFiltered is false', () => {
-      const showAllBtn = document.getElementById('showAllBtn');
-      const sprintState = { allCollapsed: false, allExpanded: false, anyFiltered: false };
-      
-      showAllBtn.disabled = !sprintState.anyFiltered;
-      
-      expect(showAllBtn.disabled).toBe(true);
-    });
-
-    test('[REGRESSION] Show All button should be enabled when anyFiltered is true', () => {
-      const showAllBtn = document.getElementById('showAllBtn');
-      const sprintState = { allCollapsed: false, allExpanded: false, anyFiltered: true };
-      
-      showAllBtn.disabled = !sprintState.anyFiltered;
-      
-      expect(showAllBtn.disabled).toBe(false);
+    test('does not write currentFilter to storage when removed filter is not the active filter', async () => {
+      // cachedCurrentFilter starts as '' (no active filter), so removing 'Team A' should
+      // only update savedFilters — not touch currentFilter in storage.
+      await popup.saveFilter('Team A');
+      await popup.removeSavedFilter('Team A');
+      const lastCall = global.chrome.storage.local.set.mock.calls.at(-1)[0];
+      expect(Object.keys(lastCall)).not.toContain('currentFilter');
+      expect(lastCall.savedFilters).toEqual([]);
     });
   });
 
-  describe('Filter Input Box Disabled State', () => {
-    test('[REGRESSION] filter input should be disabled on unsupported page', () => {
-      const filterInput = document.getElementById('filterInput');
-      const saveBtn = document.getElementById('saveFilterBtn');
-      
-      filterInput.disabled = true;
-      saveBtn.disabled = true;
-      
-      expect(filterInput.disabled).toBe(true);
-      expect(saveBtn.disabled).toBe(true);
+  // -----------------------------------------------------------------------
+  describe('displaySavedFilters', () => {
+    test('renders nothing when the filter list is empty', () => {
+      popup.displaySavedFilters([]);
+      expect(document.getElementById('savedFilters').children.length).toBe(0);
     });
 
-    test('[REGRESSION] filter input should be enabled on supported page', () => {
-      const filterInput = document.getElementById('filterInput');
-      const saveBtn = document.getElementById('saveFilterBtn');
-      
-      filterInput.disabled = false;
-      saveBtn.disabled = false;
-      
-      expect(filterInput.disabled).toBe(false);
-      expect(saveBtn.disabled).toBe(false);
-    });
-  });
-
-  describe('Saved Filters Display', () => {
-    test('should display saved filters as chips', () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Backend'];
+    test('renders a label and one chip per saved filter', () => {
+      popup.displaySavedFilters(['Team A', 'Team B']);
       const container = document.getElementById('savedFilters');
-
-      container.innerHTML = '';
-      const savedFilters = mockStorage[SAVED_FILTERS_KEY];
-
-      if (savedFilters && savedFilters.length > 0) {
-        const label = document.createElement('div');
-        label.className = 'saved-filters-label';
-        label.textContent = 'Saved Filters:';
-        container.appendChild(label);
-
-        savedFilters.forEach(filter => {
-          const chip = document.createElement('div');
-          chip.className = 'filter-chip';
-          chip.textContent = filter;
-          container.appendChild(chip);
-        });
-      }
-
       expect(container.children.length).toBe(3); // 1 label + 2 chips
       expect(container.textContent).toContain('Team A');
-      expect(container.textContent).toContain('Backend');
+      expect(container.textContent).toContain('Team B');
     });
 
-    test('should not display saved filters container when empty', () => {
-      mockStorage[SAVED_FILTERS_KEY] = [];
-      const container = document.getElementById('savedFilters');
-
-      container.innerHTML = '';
-      const savedFilters = mockStorage[SAVED_FILTERS_KEY];
-
-      if (!savedFilters || savedFilters.length === 0) {
-        container.innerHTML = '';
-      }
-
-      expect(container.children.length).toBe(0);
-    });
-
-    test('should be able to click saved filter to apply it', () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A'];
-      const filterInput = document.getElementById('filterInput');
-
-      const filterText = 'Team A';
-      filterInput.value = filterText;
-
-      expect(filterInput.value).toBe('Team A');
-    });
-
-    test('[REGRESSION] saved filters should be sorted alphabetically when added', () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team B', 'Team A'];
-
-      // Simulate adding 'Team C'
-      let saved = mockStorage[SAVED_FILTERS_KEY];
-      saved.push('Team C');
-      saved.sort();
-      mockStorage[SAVED_FILTERS_KEY] = saved;
-
-      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Team A', 'Team B', 'Team C']);
-    });
-
-    test('[REGRESSION] saved filters should remain sorted when one is removed', () => {
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B', 'Team C'];
-
-      // Remove 'Team B'
-      let saved = mockStorage[SAVED_FILTERS_KEY].filter(f => f !== 'Team B');
-      saved.sort();
-      mockStorage[SAVED_FILTERS_KEY] = saved;
-
-      expect(mockStorage[SAVED_FILTERS_KEY]).toEqual(['Team A', 'Team C']);
+    test('marks the currently active filter chip with the "selected" class', () => {
+      popup.displaySavedFilters(['Team A', 'Team B'], 'Team A');
+      const chips = document.getElementById('savedFilters').querySelectorAll('.filter-chip');
+      expect(chips[0].classList.contains('selected')).toBe(true);
+      expect(chips[1].classList.contains('selected')).toBe(false);
     });
   });
 
-  describe('Color Palette for Button States', () => {
-    test('[REGRESSION] disabled buttons should have distinct grey color', () => {
-      const style = document.createElement('style');
-      style.textContent = `.action-button:disabled { background-color: #b3b3b3; }`;
-      document.head.appendChild(style);
-
-      const btn = document.getElementById('collapseBtn');
-      btn.disabled = true;
-
-      window.getComputedStyle(btn);
-      // Note: This test verifies the style was applied, actual color testing is better in E2E
-      expect(btn.disabled).toBe(true);
+  // -----------------------------------------------------------------------
+  describe('disableAllControls', () => {
+    test('[REGRESSION] disables all interactive controls when called with true', () => {
+      popup.disableAllControls(true);
+      expect(document.getElementById('collapseBtn').disabled).toBe(true);
+      expect(document.getElementById('expandBtn').disabled).toBe(true);
+      expect(document.getElementById('filterBtn').disabled).toBe(true);
+      expect(document.getElementById('showAllBtn').disabled).toBe(true);
+      expect(document.getElementById('filterInput').disabled).toBe(true);
+      expect(document.getElementById('saveFilterBtn').disabled).toBe(true);
     });
 
-    test('[REGRESSION] enabled primary button should have blue color', () => {
-      const style = document.createElement('style');
-      style.textContent = `.action-button { background-color: #0052cc; }`;
-      document.head.appendChild(style);
-
-      const btn = document.getElementById('collapseBtn');
-      btn.disabled = false;
-
-      expect(btn.disabled).toBe(false);
-    });
-
-    test('[REGRESSION] enabled secondary button should have cyan color', () => {
-      const style = document.createElement('style');
-      style.textContent = `.action-button.secondary { background-color: #0099cc; }`;
-      document.head.appendChild(style);
-
-      const btn = document.getElementById('expandBtn');
-      btn.disabled = false;
-
-      expect(btn.disabled).toBe(false);
-      expect(btn.classList.contains('secondary')).toBe(true);
+    test('[REGRESSION] re-enables all interactive controls when called with false', () => {
+      popup.disableAllControls(true);
+      popup.disableAllControls(false);
+      expect(document.getElementById('collapseBtn').disabled).toBe(false);
+      expect(document.getElementById('expandBtn').disabled).toBe(false);
+      expect(document.getElementById('filterBtn').disabled).toBe(false);
+      expect(document.getElementById('showAllBtn').disabled).toBe(false);
+      expect(document.getElementById('filterInput').disabled).toBe(false);
+      expect(document.getElementById('saveFilterBtn').disabled).toBe(false);
     });
   });
 
-  describe('Show All Sprints Filter State', () => {
-    const CURRENT_FILTER_KEY = 'currentFilter';
-
-    test('[REGRESSION] Show All should clear filter input value', () => {
-      const filterInput = document.getElementById('filterInput');
-      filterInput.value = 'Team A';
-
-      // Simulate Show All action
-      filterInput.value = '';
-
-      expect(filterInput.value).toBe('');
+  // -----------------------------------------------------------------------
+  describe('disableFilterChips', () => {
+    test('[REGRESSION] adds "disabled" class to savedFilters container', () => {
+      popup.disableFilterChips(true);
+      expect(document.getElementById('savedFilters').classList.contains('disabled')).toBe(true);
     });
 
-    test('[REGRESSION] Show All should re-enable filter input', () => {
-      const filterInput = document.getElementById('filterInput');
-      filterInput.disabled = true;
-
-      // Simulate Show All action
-      filterInput.disabled = false;
-
-      expect(filterInput.disabled).toBe(false);
-    });
-
-    test('[REGRESSION] Show All should clear current filter from storage', () => {
-      mockStorage[CURRENT_FILTER_KEY] = 'Team A';
-
-      // Simulate Show All action
-      mockStorage[CURRENT_FILTER_KEY] = '';
-
-      expect(mockStorage[CURRENT_FILTER_KEY]).toBe('');
-    });
-
-    test('[REGRESSION] Show All should trigger filter display refresh', () => {
-      // This test verifies that loadAndDisplaySavedFilters would be called
-      // In actual implementation, this refreshes the chip selections
-      mockStorage[CURRENT_FILTER_KEY] = 'Team A';
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B'];
-
-      // Simulate Show All action
-      mockStorage[CURRENT_FILTER_KEY] = '';
-
-      // The current filter should no longer match any saved filter
-      const currentFilter = mockStorage[CURRENT_FILTER_KEY];
-      const hasMatch = mockStorage[SAVED_FILTERS_KEY].includes(currentFilter);
-
-      expect(hasMatch).toBe(false);
+    test('[REGRESSION] removes "disabled" class from savedFilters container', () => {
+      popup.disableFilterChips(true);
+      popup.disableFilterChips(false);
+      expect(document.getElementById('savedFilters').classList.contains('disabled')).toBe(false);
     });
   });
 
-  describe('Favorite Button Confirmation', () => {
-    test('[REGRESSION] adding a favorite should not show confirmation', () => {
-      const filterText = 'Team A';
-      mockStorage[SAVED_FILTERS_KEY] = [];
-
-      // Simulate adding without confirmation
-      let saved = mockStorage[SAVED_FILTERS_KEY];
-      const isSaved = saved.includes(filterText);
-
-      expect(isSaved).toBe(false);
-
-      // Add directly without confirm
-      saved.push(filterText);
-      mockStorage[SAVED_FILTERS_KEY] = saved;
-
-      expect(mockStorage[SAVED_FILTERS_KEY]).toContain('Team A');
+  // -----------------------------------------------------------------------
+  describe('updateCollapseExpandButtonText', () => {
+    test('[REGRESSION] shows "Visible Sprints" text when a filter is applied', () => {
+      popup.updateCollapseExpandButtonText(true);
+      expect(document.getElementById('collapseBtn').textContent).toBe('Collapse Visible Sprints');
+      expect(document.getElementById('expandBtn').textContent).toBe('Expand Visible Sprints');
     });
 
-    test('[REGRESSION] removing a favorite should require confirmation', () => {
-      const filterText = 'Team A';
-      mockStorage[SAVED_FILTERS_KEY] = ['Team A', 'Team B'];
-
-      const saved = mockStorage[SAVED_FILTERS_KEY];
-      const isSaved = saved.includes(filterText);
-
-      // Should be saved, meaning removal requires confirmation
-      expect(isSaved).toBe(true);
-
-      // Simulate user confirming removal
-      const userConfirmed = true;
-      if (userConfirmed) {
-        mockStorage[SAVED_FILTERS_KEY] = saved.filter(f => f !== filterText);
-      }
-
-      expect(mockStorage[SAVED_FILTERS_KEY]).not.toContain('Team A');
-      expect(mockStorage[SAVED_FILTERS_KEY]).toContain('Team B');
+    test('[REGRESSION] restores "All Sprints" text when filter is removed', () => {
+      popup.updateCollapseExpandButtonText(true);
+      popup.updateCollapseExpandButtonText(false);
+      expect(document.getElementById('collapseBtn').textContent).toBe('Collapse All Sprints');
+      expect(document.getElementById('expandBtn').textContent).toBe('Expand All Sprints');
     });
   });
 
-  describe('Close Button', () => {
-    test('[REGRESSION] close button should exist in DOM', () => {
-      const closeBtn = document.getElementById('closeBtn');
-      expect(closeBtn).not.toBeNull();
+  // -----------------------------------------------------------------------
+  describe('updateActionButtonStates', () => {
+    test('[REGRESSION] collapseBtn disabled when allCollapsed is true', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: true, allExpanded: false, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('collapseBtn').disabled).toBe(true);
+        expect(document.getElementById('expandBtn').disabled).toBe(false);
+        done();
+      });
     });
 
-    test('[REGRESSION] close button should have proper classes', () => {
-      const closeBtn = document.getElementById('closeBtn');
-      expect(closeBtn.classList.contains('close-btn')).toBe(true);
+    test('[REGRESSION] expandBtn disabled when allExpanded is true', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: true, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('expandBtn').disabled).toBe(true);
+        expect(document.getElementById('collapseBtn').disabled).toBe(false);
+        done();
+      });
     });
 
-    test('[REGRESSION] close button should have × character', () => {
-      const closeBtn = document.getElementById('closeBtn');
-      // The button text might be set dynamically, but we expect it to contain ×
-      closeBtn.textContent = '×';
-      expect(closeBtn.textContent).toBe('×');
-    });
-  });
-
-  describe('Spinner Animations', () => {
-    test('[REGRESSION] button should display spinner during operation', () => {
-      const btn = document.getElementById('collapseBtn');
-
-      // Simulate operation starting
-      btn.innerHTML = '<span class="spinner"></span>Collapsing...';
-
-      expect(btn.innerHTML).toContain('spinner');
-      expect(btn.textContent).toContain('Collapsing...');
+    test('[REGRESSION] showAllBtn disabled when no sprints are currently filtered', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('showAllBtn').disabled).toBe(true);
+        done();
+      });
     });
 
-    test('[REGRESSION] button should restore original text after operation', () => {
-      const btn = document.getElementById('collapseBtn');
-      const originalText = 'Collapse All Sprints';
-
-      // Simulate operation starting
-      btn.innerHTML = '<span class="spinner"></span>Collapsing...';
-
-      // Simulate operation completing
-      btn.textContent = originalText;
-
-      expect(btn.textContent).toBe(originalText);
-      expect(btn.innerHTML).not.toContain('spinner');
+    test('[REGRESSION] showAllBtn enabled when sprints are currently filtered', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: true });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('showAllBtn').disabled).toBe(false);
+        done();
+      });
     });
 
-    test('[REGRESSION] all action buttons should support spinner state', () => {
-      const buttons = [
-        { id: 'collapseBtn', activeText: 'Collapsing...' },
-        { id: 'expandBtn', activeText: 'Expanding...' },
-        { id: 'filterBtn', activeText: 'Filtering...' },
-        { id: 'showAllBtn', activeText: 'Restoring...' }
-      ];
+    test('[REGRESSION] filterBtn disabled when filter input is empty', (done) => {
+      // filterInput starts empty — hasFilterText is false regardless of filter state
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('filterBtn').disabled).toBe(true);
+        done();
+      });
+    });
 
-      buttons.forEach(({ id, activeText }) => {
-        const btn = document.getElementById(id);
-        btn.innerHTML = `<span class="spinner"></span>${activeText}`;
+    test('[REGRESSION] filterBtn enabled when filter text is present and no filter is applied', (done) => {
+      document.getElementById('filterInput').value = 'Team A';
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('filterBtn').disabled).toBe(false);
+        done();
+      });
+    });
 
-        expect(btn.innerHTML).toContain('spinner');
-        expect(btn.textContent).toContain(activeText);
+    test('[REGRESSION] filterBtn enabled when filter text differs from the currently applied filter', (done) => {
+      // cachedCurrentFilter starts as '' — any non-empty input is a different filter
+      document.getElementById('filterInput').value = 'Team B';
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: true });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(document.getElementById('filterBtn').disabled).toBe(false);
+        done();
       });
     });
   });
 
-  describe('Filter Chips Disabled State', () => {
-    test('[REGRESSION] filter chips container should be disabled during operations', () => {
-      const container = document.getElementById('savedFilters');
-
-      // Simulate disabling chips
-      container.classList.add('disabled');
-
-      expect(container.classList.contains('disabled')).toBe(true);
+  // -----------------------------------------------------------------------
+  describe('setButtonLoading', () => {
+    test('replaces button content with a spinner element and loading text', () => {
+      const btn = document.getElementById('collapseBtn');
+      popup.setButtonLoading(btn, 'Collapsing...');
+      expect(btn.querySelector('.spinner')).not.toBeNull();
+      expect(btn.textContent).toContain('Collapsing...');
     });
 
-    test('[REGRESSION] filter chips container should be re-enabled after operations', () => {
-      const container = document.getElementById('savedFilters');
-
-      // Simulate operation starting
-      container.classList.add('disabled');
-      expect(container.classList.contains('disabled')).toBe(true);
-
-      // Simulate operation completing
-      container.classList.remove('disabled');
-      expect(container.classList.contains('disabled')).toBe(false);
-    });
-
-    test('[REGRESSION] disabled chips should have reduced opacity', () => {
-      const style = document.createElement('style');
-      style.textContent = `.saved-filters.disabled { opacity: 0.5; pointer-events: none; }`;
-      document.head.appendChild(style);
-
-      const container = document.getElementById('savedFilters');
-      container.classList.add('disabled');
-
-      expect(container.classList.contains('disabled')).toBe(true);
+    test('[REGRESSION] calling setButtonLoading again replaces previous state without duplicating spinners', () => {
+      const btn = document.getElementById('collapseBtn');
+      popup.setButtonLoading(btn, 'Collapsing...');
+      popup.setButtonLoading(btn, 'Almost done...');
+      expect(btn.querySelectorAll('.spinner')).toHaveLength(1);
+      expect(btn.textContent).toContain('Almost done...');
     });
   });
 
-  describe('Dynamic Button Text', () => {
-    test('[REGRESSION] buttons should say "All Sprints" when no filter is applied', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const expandBtn = document.getElementById('expandBtn');
-
-      // Simulate no filter applied
-      const hasFilterApplied = false;
-
-      if (!hasFilterApplied) {
-        collapseBtn.textContent = 'Collapse All Sprints';
-        expandBtn.textContent = 'Expand All Sprints';
-      }
-
-      expect(collapseBtn.textContent).toBe('Collapse All Sprints');
-      expect(expandBtn.textContent).toBe('Expand All Sprints');
-    });
-
-    test('[REGRESSION] buttons should say "Visible Sprints" when filter is applied', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const expandBtn = document.getElementById('expandBtn');
-
-      // Save original text
-      collapseBtn.dataset.originalText = collapseBtn.textContent;
-      expandBtn.dataset.originalText = expandBtn.textContent;
-
-      // Simulate filter applied
-      const hasFilterApplied = true;
-
-      if (hasFilterApplied) {
-        collapseBtn.textContent = 'Collapse Visible Sprints';
-        expandBtn.textContent = 'Expand Visible Sprints';
-      }
-
-      expect(collapseBtn.textContent).toBe('Collapse Visible Sprints');
-      expect(expandBtn.textContent).toBe('Expand Visible Sprints');
-    });
-
-    test('[REGRESSION] buttons should restore original text when filter is removed', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const expandBtn = document.getElementById('expandBtn');
-
-      // Set initial state
-      collapseBtn.dataset.originalText = 'Collapse All Sprints';
-      expandBtn.dataset.originalText = 'Expand All Sprints';
-
-      // Apply filter
-      collapseBtn.textContent = 'Collapse Visible Sprints';
-      expandBtn.textContent = 'Expand Visible Sprints';
-
-      // Remove filter
-      const hasFilterApplied = false;
-      if (!hasFilterApplied) {
-        collapseBtn.textContent = collapseBtn.dataset.originalText;
-        expandBtn.textContent = expandBtn.dataset.originalText;
-      }
-
-      expect(collapseBtn.textContent).toBe('Collapse All Sprints');
-      expect(expandBtn.textContent).toBe('Expand All Sprints');
-    });
-  });
-
-  describe('Debug Mode', () => {
-    const DEBUG_MODE_KEY = 'debugMode';
-
-    test('[REGRESSION] debug mode should be disabled by default', () => {
-      mockStorage[DEBUG_MODE_KEY] = false;
-      expect(mockStorage[DEBUG_MODE_KEY]).toBe(false);
-    });
-
-    test('[REGRESSION] debug mode can be toggled on', () => {
-      mockStorage[DEBUG_MODE_KEY] = false;
-
-      // Toggle on
-      mockStorage[DEBUG_MODE_KEY] = !mockStorage[DEBUG_MODE_KEY];
-
-      expect(mockStorage[DEBUG_MODE_KEY]).toBe(true);
-    });
-
-    test('[REGRESSION] debug mode can be toggled off', () => {
-      mockStorage[DEBUG_MODE_KEY] = true;
-
-      // Toggle off
-      mockStorage[DEBUG_MODE_KEY] = !mockStorage[DEBUG_MODE_KEY];
-
-      expect(mockStorage[DEBUG_MODE_KEY]).toBe(false);
-    });
-
-    test('[REGRESSION] debug mode persists across sessions', () => {
-      mockStorage[DEBUG_MODE_KEY] = true;
-
-      // Simulate page reload - storage should retain value
-      const persistedValue = mockStorage[DEBUG_MODE_KEY];
-
-      expect(persistedValue).toBe(true);
-    });
-
-    test('[REGRESSION] title should indicate debug mode when enabled', () => {
+  // -----------------------------------------------------------------------
+  describe('toggleDebugMode', () => {
+    test('[REGRESSION] turns title red and updates tooltip when debug mode is enabled', async () => {
+      await popup.toggleDebugMode(); // starts false → true
       const title = document.querySelector('h2');
-      mockStorage[DEBUG_MODE_KEY] = true;
-
-      // Simulate debug mode UI update
-      if (mockStorage[DEBUG_MODE_KEY]) {
-        title.style.color = '#ff6b6b';
-        title.title = 'Debug mode enabled - Triple-click to disable';
-      }
-
-      // CSS colors can be returned as hex or rgb format
-      expect(title.style.color).toBeTruthy();
       expect(['#ff6b6b', 'rgb(255, 107, 107)']).toContain(title.style.color);
       expect(title.title).toContain('Debug mode enabled');
     });
 
-    test('[REGRESSION] title should clear indicator when debug mode disabled', () => {
+    test('[REGRESSION] clears title color and resets tooltip when debug mode is disabled', async () => {
+      await popup.toggleDebugMode(); // → true
+      await popup.toggleDebugMode(); // → false
       const title = document.querySelector('h2');
-      mockStorage[DEBUG_MODE_KEY] = false;
-
-      // Simulate debug mode UI update
-      if (!mockStorage[DEBUG_MODE_KEY]) {
-        title.style.color = '';
-        title.title = 'Triple-click to enable debug mode';
-      }
-
       expect(title.style.color).toBe('');
       expect(title.title).toContain('Triple-click to enable');
     });
   });
 
-  describe('Popup Initialization', () => {
-    test('[REGRESSION] all action buttons should be disabled initially', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const expandBtn = document.getElementById('expandBtn');
-      const filterBtn = document.getElementById('filterBtn');
-      const showAllBtn = document.getElementById('showAllBtn');
+});
 
-      // Simulate initial state
-      collapseBtn.disabled = true;
-      expandBtn.disabled = true;
-      filterBtn.disabled = true;
-      showAllBtn.disabled = true;
+// -----------------------------------------------------------------------
+// URL Support Checking uses the pure isUrlSupported export — no chrome mocks needed.
+// Requiring here (at describe-evaluation time) is safe: popup.js only exports without
+// calling init() when typeof module !== 'undefined'.
+describe('URL Support Checking', () => {
+  const { isUrlSupported } = require('../popup.js');
 
-      expect(collapseBtn.disabled).toBe(true);
-      expect(expandBtn.disabled).toBe(true);
-      expect(filterBtn.disabled).toBe(true);
-      expect(showAllBtn.disabled).toBe(true);
-    });
-
-    test('[REGRESSION] buttons should be enabled after state is loaded', () => {
-      const collapseBtn = document.getElementById('collapseBtn');
-      const expandBtn = document.getElementById('expandBtn');
-
-      // Initial disabled state
-      collapseBtn.disabled = true;
-      expandBtn.disabled = true;
-
-      // Simulate state loaded via callback
-      const sprintState = { allCollapsed: false, allExpanded: false };
-      collapseBtn.disabled = sprintState.allCollapsed;
-      expandBtn.disabled = sprintState.allExpanded;
-
-      expect(collapseBtn.disabled).toBe(false);
-      expect(expandBtn.disabled).toBe(false);
-    });
+  test('[REGRESSION] should recognize valid Jira backlog URL pattern 1 (c/projects)', () => {
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog')).toBe(true);
   });
 
-  describe('URL Support Checking', () => {
-    // Helper function matching the one in popup.js
-    function isUrlSupported(url) {
-      if (!url) return false;
-
-      const patterns = [
-        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
-        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
-        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/backlog/
-      ];
-
-      return patterns.some(pattern => pattern.test(url));
-    }
-
-    test('[REGRESSION] should recognize valid Jira backlog URL pattern 1 (c/projects)', () => {
-      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
-      expect(isUrlSupported(url)).toBe(true);
-    });
-
-    test('[REGRESSION] should recognize valid Jira backlog URL pattern 2 (projects with segment)', () => {
-      const url = 'https://example.atlassian.net/jira/software/v1/projects/PROJ/boards/123/backlog';
-      expect(isUrlSupported(url)).toBe(true);
-    });
-
-    test('[REGRESSION] should recognize valid Jira backlog URL pattern 3 (simple with segment)', () => {
-      const url = 'https://example.atlassian.net/jira/software/v1/backlog';
-      expect(isUrlSupported(url)).toBe(true);
-    });
-
-    test('[REGRESSION] should reject non-Jira URLs', () => {
-      const url = 'https://example.com';
-      expect(isUrlSupported(url)).toBe(false);
-    });
-
-    test('[REGRESSION] should reject Jira URLs that are not backlog pages', () => {
-      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123';
-      expect(isUrlSupported(url)).toBe(false);
-    });
-
-    test('[REGRESSION] should reject empty or null URLs', () => {
-      expect(isUrlSupported('')).toBe(false);
-      expect(isUrlSupported(null)).toBe(false);
-      expect(isUrlSupported(undefined)).toBe(false);
-    });
-
-    test('[REGRESSION] should reject URLs with query parameters at the end', () => {
-      const url = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog?selectedIssue=PROJ-123';
-      expect(isUrlSupported(url)).toBe(true); // Query params are OK after backlog
-    });
-
-    test('[REGRESSION] should handle URLs with different subdomains', () => {
-      const url1 = 'https://mycompany.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
-      const url2 = 'https://another-org.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
-
-      expect(isUrlSupported(url1)).toBe(true);
-      expect(isUrlSupported(url2)).toBe(true);
-    });
+  test('[REGRESSION] should recognize valid Jira backlog URL pattern 2 (projects with segment)', () => {
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/v1/projects/PROJ/boards/123/backlog')).toBe(true);
   });
 
-  describe('Page Support Error Messages', () => {
-    test('[REGRESSION] should show generic error when URL does not match pattern', () => {
-      const statusDiv = document.getElementById('status');
-
-      // Simulate unsupported URL check
-      const isSupported = false; // URL check failed
-
-      if (!isSupported) {
-        statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
-        statusDiv.className = 'status-message error';
-      }
-
-      expect(statusDiv.textContent).toContain('only works on Jira Cloud board backlog pages');
-      expect(statusDiv.className).toContain('error');
-    });
-
-    test('[REGRESSION] should show different error when URL matches but content script not loaded', () => {
-      const statusDiv = document.getElementById('status');
-
-      // Simulate supported URL but no content script response
-      const isUrlSupported = true;
-      const contentScriptResponded = false;
-      const retriesExhausted = true;
-
-      if (isUrlSupported && !contentScriptResponded && retriesExhausted) {
-        statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
-        statusDiv.className = 'status-message error';
-      }
-
-      expect(statusDiv.textContent).toContain('Content script not loaded');
-      expect(statusDiv.textContent).toContain('Try refreshing');
-      expect(statusDiv.className).toContain('error');
-    });
-
-    test('[REGRESSION] unsupported URL should show error without retry delay', () => {
-      const startTime = Date.now();
-      const statusDiv = document.getElementById('status');
-
-      // Simulate immediate error (no retries for unsupported URL)
-      const isUrlSupported = false;
-
-      if (!isUrlSupported) {
-        statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
-        const endTime = Date.now();
-        const elapsed = endTime - startTime;
-
-        // Should be nearly instant (< 50ms) since no retries
-        expect(elapsed).toBeLessThan(50);
-      }
-
-      expect(statusDiv.textContent).toContain('only works on Jira Cloud board backlog pages');
-    });
-
-    test('[REGRESSION] supported URL should trigger retry mechanism', () => {
-      const isUrlSupported = true;
-      const retries = 5;
-      const delay = 200;
-
-      // Verify retry parameters are set correctly for supported URLs
-      expect(isUrlSupported).toBe(true);
-      expect(retries).toBe(5);
-      expect(delay).toBe(200);
-
-      // Total wait time should be up to 5 * 200ms = 1000ms
-      const maxWaitTime = retries * delay;
-      expect(maxWaitTime).toBe(1000);
-    });
+  test('[REGRESSION] should recognize valid Jira backlog URL pattern 3 (simple with segment)', () => {
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/v1/backlog')).toBe(true);
   });
 
-  describe('Tab Navigation Scenarios', () => {
-    test('[REGRESSION] navigating from non-Jira to Jira page should allow popup to work', () => {
-      // Scenario 1: User on non-Jira page
-      let currentUrl = 'https://example.com';
-      let isSupported = currentUrl.includes('atlassian.net') && currentUrl.includes('backlog');
+  test('[REGRESSION] should reject non-Jira URLs', () => {
+    expect(isUrlSupported('https://example.com')).toBe(false);
+  });
 
-      expect(isSupported).toBe(false);
+  test('[REGRESSION] should reject Jira URLs that are not backlog pages', () => {
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123')).toBe(false);
+  });
 
-      // Scenario 2: User navigates to Jira page
-      currentUrl = 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
-      isSupported = currentUrl.includes('atlassian.net') && currentUrl.includes('backlog');
+  test('[REGRESSION] should reject empty, null, and undefined URLs', () => {
+    expect(isUrlSupported('')).toBe(false);
+    expect(isUrlSupported(null)).toBe(false);
+    expect(isUrlSupported(undefined)).toBe(false);
+  });
 
-      expect(isSupported).toBe(true);
+  test('[REGRESSION] should accept URLs with query parameters after /backlog', () => {
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog?selectedIssue=PROJ-123')).toBe(true);
+  });
 
-      // Popup should now check URL and attempt to contact content script
-      // This test verifies the URL check would pass
+  test('[REGRESSION] should handle different organisation subdomains', () => {
+    expect(isUrlSupported('https://mycompany.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog')).toBe(true);
+    expect(isUrlSupported('https://another-org.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog')).toBe(true);
+  });
+
+  test('[REGRESSION] should reject team-managed project URLs (format not currently supported)', () => {
+    // Team-managed boards use /jira/software/projects/ with no segment prefix — none of the
+    // three supported patterns match this shape. Documents current intentional behaviour.
+    expect(isUrlSupported('https://example.atlassian.net/jira/software/projects/PROJ/boards/123/backlog')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------
+describe('checkSupportedPage', () => {
+  let checkSupportedPage;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.resetModules();
+
+    document.body.innerHTML = POPUP_DOM;
+
+    global.chrome = {
+      tabs: {
+        query: jest.fn((_, cb) => {
+          const tabs = [{ id: 1, url: BACKLOG_URL }];
+          if (cb) { cb(tabs); return; }
+          return Promise.resolve(tabs);
+        }),
+        sendMessage: jest.fn((tabId, msg, cb) => {
+          if (msg.action === 'checkPageSupport') cb({ supported: true });
+          else if (msg.action === 'getSprintState') cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+        }),
+      },
+      storage: {
+        local: {
+          get: jest.fn(() => Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false })),
+          set: jest.fn(() => Promise.resolve()),
+        },
+      },
+      runtime: { lastError: null },
+    };
+
+    ({ checkSupportedPage } = require('../popup.js'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('[REGRESSION] should recover when tab URL is stale on first check due to SPA navigation', () => {
+    let callCount = 0;
+    global.chrome.tabs.query = jest.fn((_, cb) => {
+      callCount++;
+      const tabs = [{ id: 1, url: callCount === 1 ? NON_BACKLOG_URL : BACKLOG_URL }];
+      if (cb) { cb(tabs); return; }
+      return Promise.resolve(tabs);
     });
 
-    test('[REGRESSION] opening popup on Jira page should check current URL, not cached state', () => {
-      // Simulate popup opening - should always check current tab URL
-      const getCurrentTabUrl = () => 'https://example.atlassian.net/jira/software/c/projects/PROJ/boards/123/backlog';
+    checkSupportedPage(3, 100);
+    jest.runAllTimers();
 
-      const currentUrl = getCurrentTabUrl();
-      const patterns = [
-        /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/
-      ];
+    // Recovered successfully — no error message should appear
+    expect(document.getElementById('status').textContent).toBe('');
+  });
 
-      const isCurrentlySupported = patterns.some(pattern => pattern.test(currentUrl));
-
-      expect(isCurrentlySupported).toBe(true);
-      // This ensures we're not relying on stale state
+  test('[REGRESSION] should show URL error after all retries if URL never becomes valid', () => {
+    global.chrome.tabs.query = jest.fn((_, cb) => {
+      const tabs = [{ id: 1, url: NON_BACKLOG_URL }];
+      if (cb) { cb(tabs); return; }
+      return Promise.resolve(tabs);
     });
 
-    test('[REGRESSION] popup should retry if content script is loading', () => {
-      let contentScriptReady = false;
-      let attemptCount = 0;
-      const maxRetries = 5;
+    checkSupportedPage(2, 100);
+    jest.runAllTimers();
 
-      // Simulate retry logic
-      while (!contentScriptReady && attemptCount < maxRetries) {
-        attemptCount++;
+    expect(document.getElementById('status').textContent).toContain('only works on Jira Cloud board backlog pages');
+  });
 
-        // On 3rd attempt, content script becomes ready
-        if (attemptCount === 3) {
-          contentScriptReady = true;
-        }
-      }
+  test('[REGRESSION] should show content script error if URL is valid but script never responds', () => {
+    global.chrome.tabs.sendMessage = jest.fn((_tabId, _msg, cb) => cb(undefined));
 
-      expect(contentScriptReady).toBe(true);
-      expect(attemptCount).toBe(3);
-      expect(attemptCount).toBeLessThan(maxRetries);
+    checkSupportedPage(2, 100);
+    jest.runAllTimers();
+
+    expect(document.getElementById('status').textContent).toContain('Content script not loaded');
+  });
+
+  test('[REGRESSION] should show no error when content script responds on first attempt', () => {
+    checkSupportedPage(3, 100);
+    // No timer advancement — first attempt succeeds synchronously
+
+    expect(document.getElementById('status').textContent).toBe('');
+  });
+
+  test('[REGRESSION] should show no error and leave controls disabled when no active tab is found', () => {
+    global.chrome.tabs.query = jest.fn((_, cb) => {
+      if (cb) cb([]); // empty — no active tab
     });
+
+    checkSupportedPage(1, 100);
+    jest.runAllTimers();
+
+    // Silent no-op: no error status, controls remain disabled (set at the start of checkSupportedPage)
+    expect(document.getElementById('status').textContent).toBe('');
+    expect(document.getElementById('collapseBtn').disabled).toBe(true);
   });
 });
