@@ -337,67 +337,69 @@ function isUrlSupported(url) {
 }
 
 // Check if we're on a supported page when popup loads
-async function checkSupportedPage(retries = 5, delay = 200) {
-  const tab = await getActiveTab();
-  if (!tab) return;
-
-  const totalRetries = retries;
-
+function checkSupportedPage(retries = 5, delay = 200) {
   // Disable action buttons initially until state is loaded
   document.getElementById('collapseBtn').disabled = true;
   document.getElementById('expandBtn').disabled = true;
   document.getElementById('filterBtn').disabled = true;
   document.getElementById('showAllBtn').disabled = true;
 
-  // First check if the URL matches supported patterns
-  const urlSupported = isUrlSupported(tab.url);
+  const totalRetries = retries;
 
-  if (!urlSupported) {
-    // URL doesn't match - show error immediately without retrying
-    debugLog('URL not supported:', tab.url);
-    disableAllControls(true);
-    const statusDiv = document.getElementById('status');
-    statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
-    statusDiv.className = 'status-message error';
-    statusDiv.style.marginTop = '16px';
-    return;
-  }
-
-  // URL is supported, so content script should be present
-  // Try to reach it with retries (handles timing issues and SPA navigation)
-  debugLog('URL is supported, attempting to reach content script');
-
+  // Re-query the active tab on each attempt so a stale URL from an in-progress
+  // Jira SPA navigation doesn't cause a false URL-mismatch error.
   const attemptCheck = (retriesLeft) => {
-    debugLog(`Attempting to reach content script (${totalRetries - retriesLeft + 1}/${totalRetries})`);
+    debugLog(`Attempting page check (${totalRetries - retriesLeft + 1}/${totalRetries})`);
 
-    chrome.tabs.sendMessage(
-      tab.id,
-      { action: 'checkPageSupport' },
-      async (response) => {
-        if (chrome.runtime.lastError || !response) {
-          debugLog(`No response:`, chrome.runtime.lastError?.message);
-          if (retriesLeft > 0) {
-            debugLog(`Retrying in ${delay}ms...`);
-            setTimeout(() => attemptCheck(retriesLeft - 1), delay);
-          } else {
-            debugLog('Max retries reached, content script not responding');
-            disableAllControls(true);
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
-            statusDiv.className = 'status-message error';
-            statusDiv.style.marginTop = '16px';
-          }
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab) return;
+
+      const urlSupported = isUrlSupported(tab.url);
+
+      if (!urlSupported) {
+        debugLog('URL not supported:', tab.url);
+        if (retriesLeft > 0) {
+          setTimeout(() => attemptCheck(retriesLeft - 1), delay);
         } else {
-          // Successful response, initialize popup
-          debugLog('Content script responded, initializing popup');
-          await initializeFilterState();
-          // Update button states based on current sprint state
-          updateActionButtonStates(() => {
-            debugLog('Popup initialized and ready');
-          });
+          disableAllControls(true);
+          const statusDiv = document.getElementById('status');
+          statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
+          statusDiv.className = 'status-message error';
+          statusDiv.style.marginTop = '16px';
         }
+        return;
       }
-    );
+
+      // URL is supported, try to reach the content script
+      debugLog('URL is supported, attempting to reach content script');
+      chrome.tabs.sendMessage(
+        tab.id,
+        { action: 'checkPageSupport' },
+        async (response) => {
+          if (chrome.runtime.lastError || !response) {
+            debugLog('No response:', chrome.runtime.lastError?.message);
+            if (retriesLeft > 0) {
+              debugLog(`Retrying in ${delay}ms...`);
+              setTimeout(() => attemptCheck(retriesLeft - 1), delay);
+            } else {
+              debugLog('Max retries reached, content script not responding');
+              disableAllControls(true);
+              const statusDiv = document.getElementById('status');
+              statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
+              statusDiv.className = 'status-message error';
+              statusDiv.style.marginTop = '16px';
+            }
+          } else {
+            // Successful response, initialize popup
+            debugLog('Content script responded, initializing popup');
+            await initializeFilterState();
+            updateActionButtonStates(() => {
+              debugLog('Popup initialized and ready');
+            });
+          }
+        }
+      );
+    });
   };
 
   attemptCheck(retries);
@@ -615,9 +617,25 @@ function init() {
   checkSupportedPage();
 }
 
-// Defer initialization until DOM is ready. For a script at the bottom of <body>,
-// the DOM is already parsed, so init() runs immediately in practice.
-if (document.readyState === 'loading') {
+if (typeof module !== 'undefined') {
+  // Test/Node environment — export functions without auto-initializing
+  module.exports = {
+    checkSupportedPage,
+    isUrlSupported,
+    updateSaveButtonState,
+    displaySavedFilters,
+    saveFilter,
+    removeSavedFilter,
+    disableAllControls,
+    disableFilterChips,
+    updateCollapseExpandButtonText,
+    updateActionButtonStates,
+    setButtonLoading,
+    toggleDebugMode,
+  };
+} else if (document.readyState === 'loading') {
+  // Defer initialization until DOM is ready. For a script at the bottom of <body>,
+  // the DOM is already parsed, so init() runs immediately in practice.
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();

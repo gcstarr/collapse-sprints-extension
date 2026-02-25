@@ -99,6 +99,7 @@ describe('Sprint Collapser Content Script', () => {
       createSprintButton('sprint-2', false);
 
       collapseAllSprints((result) => {
+        expect(result.success).toBe(true);
         expect(result.message).toBe('Collapsed 0 sprints');
         done();
       });
@@ -112,7 +113,7 @@ describe('Sprint Collapser Content Script', () => {
 
       collapseAllSprints((result) => {
         // Only 1 should collapse (the visible one)
-        expect(result.message).toContain('Collapsed 1 sprint');
+        expect(result.message).toBe('Collapsed 1 sprint');
 
         const buttons = findSprintToggleButtons();
         // Visible sprint should be collapsed
@@ -129,6 +130,37 @@ describe('Sprint Collapser Content Script', () => {
       collapseAllSprints((result) => {
         expect(result.success).toBe(false);
         expect(result.message).toBe('No sprints found');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('[REGRESSION] returns success with 0 count when all sprints are filtered out', (done) => {
+      createSprintButton('sprint-1', true, true);
+      createSprintButton('sprint-2', true, true);
+
+      collapseAllSprints((result) => {
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Collapsed 0 sprints');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
+
+    test('[REGRESSION] should collapse all sprints when more than one batch (>10) is needed', (done) => {
+      for (let i = 1; i <= 15; i++) {
+        createSprintButton(`sprint-${i}`, true);
+      }
+
+      collapseAllSprints((result) => {
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Collapsed 15 sprints');
+
+        findSprintToggleButtons().forEach(btn => {
+          expect(btn.getAttribute('aria-expanded')).toBe('false');
+        });
         done();
       });
 
@@ -161,7 +193,7 @@ describe('Sprint Collapser Content Script', () => {
 
       expandAllSprints((result) => {
         // Only 1 should expand (the visible one)
-        expect(result.message).toContain('Expanded 1 sprint');
+        expect(result.message).toBe('Expanded 1 sprint');
 
         const buttons = findSprintToggleButtons();
         // Visible sprint should be expanded
@@ -192,6 +224,7 @@ describe('Sprint Collapser Content Script', () => {
       createSprintButton('sprint-2', true);
 
       expandAllSprints((result) => {
+        expect(result.success).toBe(true);
         expect(result.message).toBe('Expanded 0 sprints');
         done();
       });
@@ -208,9 +241,30 @@ describe('Sprint Collapser Content Script', () => {
 
       jest.runAllTimers();
     });
+
+    test('[REGRESSION] returns success with 0 count when all sprints are filtered out', (done) => {
+      createSprintButton('sprint-1', false, true);
+      createSprintButton('sprint-2', false, true);
+
+      expandAllSprints((result) => {
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Expanded 0 sprints');
+        done();
+      });
+
+      jest.runAllTimers();
+    });
   });
 
   describe('filterSprints', () => {
+    // Helper: creates a divider element as the next DOM sibling after the last appended element
+    function createDivider() {
+      const divider = document.createElement('div');
+      divider.setAttribute('data-testid', 'software-backlog.card-list.divider.container');
+      document.body.appendChild(divider);
+      return divider;
+    }
+
     test('should hide sprints that do not match the filter', () => {
       createSprintButton('sprint-Team-A', true, false);
       createSprintButton('sprint-Team-B', true, false);
@@ -241,6 +295,68 @@ describe('Sprint Collapser Content Script', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('No sprints found');
     });
+
+    test('[REGRESSION] filter matching should be case-insensitive', () => {
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+
+      // Sprint names: "Sprint Team-A" and "Sprint Team-B" (from createSprintButton's h2)
+      const result = filterSprints('team-a'); // lowercase — should still match "Sprint Team-A"
+      expect(result.success).toBe(true);
+
+      const buttons = findSprintToggleButtons();
+      const outerA = buttons[0].closest('div[data-drop-target-for-element="true"]').parentElement;
+      const outerB = buttons[1].closest('div[data-drop-target-for-element="true"]').parentElement;
+
+      expect(outerA.style.display).toBe('');
+      expect(outerB.style.display).toBe('none');
+    });
+
+    test('[REGRESSION] hides adjacent divider when the sprint beside it is filtered out', () => {
+      createSprintButton('sprint-Team-A', true, false);
+      const divider = createDivider();
+
+      // Sprint A does not match "Team-B" — outer and trailing divider should both be hidden
+      filterSprints('Team-B');
+
+      const buttons = findSprintToggleButtons();
+      const outerA = buttons[0].closest('div[data-drop-target-for-element="true"]').parentElement;
+      expect(outerA.style.display).toBe('none');
+      expect(divider.style.display).toBe('none');
+      expect(divider.getAttribute('data-filtered-hidden')).toBe('true');
+    });
+
+    test('[REGRESSION] hides a preceding divider when the sprint after it is filtered out', () => {
+      // Divider added BEFORE the sprint so it becomes prevElementSibling of the sprint's outer container
+      const divider = document.createElement('div');
+      divider.setAttribute('data-testid', 'software-backlog.card-list.divider.container');
+      document.body.appendChild(divider);
+
+      createSprintButton('sprint-Team-A', true, false);
+
+      filterSprints('Team-B'); // Team-A does not match
+
+      expect(divider.style.display).toBe('none');
+      expect(divider.getAttribute('data-filtered-hidden')).toBe('true');
+    });
+
+    test('[REGRESSION] applying a second filter correctly updates visibility from the first filter', () => {
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+
+      filterSprints('Team-A'); // hides Team-B
+
+      const buttons = findSprintToggleButtons();
+      const outerA = buttons[0].closest('div[data-drop-target-for-element="true"]').parentElement;
+      const outerB = buttons[1].closest('div[data-drop-target-for-element="true"]').parentElement;
+
+      filterSprints('Team-B'); // should now hide Team-A and show Team-B
+
+      expect(outerA.style.display).toBe('none');
+      expect(outerA.getAttribute('data-filtered-hidden')).toBe('true');
+      expect(outerB.style.display).toBe('');
+      expect(outerB.getAttribute('data-filtered-hidden')).toBeNull();
+    });
   });
 
   describe('showAllSprints', () => {
@@ -253,6 +369,43 @@ describe('Sprint Collapser Content Script', () => {
       expect(outer.style.display).toBe('');
       // showAllSprints removes the attribute entirely rather than setting it to 'false'
       expect(outer.getAttribute('data-filtered-hidden')).toBeNull();
+    });
+
+    test('[REGRESSION] restores a hidden adjacent divider when showing all sprints', () => {
+      const outer = createSprintButton('sprint-1', true, true);
+      outer.style.display = 'none';
+
+      // Append a divider that was also hidden by filterSprints
+      const divider = document.createElement('div');
+      divider.setAttribute('data-testid', 'software-backlog.card-list.divider.container');
+      divider.style.display = 'none';
+      divider.setAttribute('data-filtered-hidden', 'true');
+      // Insert divider as the next sibling of outer in the DOM
+      document.body.appendChild(divider);
+
+      showAllSprints();
+
+      expect(outer.style.display).toBe('');
+      expect(divider.style.display).toBe('');
+      expect(divider.getAttribute('data-filtered-hidden')).toBeNull();
+    });
+
+    test('[REGRESSION] restores a hidden preceding divider when showing all sprints', () => {
+      // Divider added BEFORE the sprint so it becomes prevElementSibling
+      const divider = document.createElement('div');
+      divider.setAttribute('data-testid', 'software-backlog.card-list.divider.container');
+      divider.style.display = 'none';
+      divider.setAttribute('data-filtered-hidden', 'true');
+      document.body.appendChild(divider);
+
+      const outer = createSprintButton('sprint-1', true, true);
+      outer.style.display = 'none';
+
+      showAllSprints();
+
+      expect(outer.style.display).toBe('');
+      expect(divider.style.display).toBe('');
+      expect(divider.getAttribute('data-filtered-hidden')).toBeNull();
     });
 
     test('should handle no sprints gracefully', () => {
@@ -309,6 +462,17 @@ describe('Sprint Collapser Content Script', () => {
       expect(state.anyFiltered).toBe(true);
     });
 
+    test('[REGRESSION] should return allCollapsed/allExpanded false when all sprints are filtered (no visible sprints)', () => {
+      createSprintButton('sprint-1', true, true);
+      createSprintButton('sprint-2', false, true);
+
+      const state = getSprintState();
+      // visibleCount is 0 — neither condition can be "all" of zero
+      expect(state.allCollapsed).toBe(false);
+      expect(state.allExpanded).toBe(false);
+      expect(state.anyFiltered).toBe(true);
+    });
+
     test('should handle no sprints gracefully', () => {
       const state = getSprintState();
       expect(state.allCollapsed).toBe(false);
@@ -335,26 +499,16 @@ describe('Sprint Collapser Content Script', () => {
       jest.runAllTimers();
     });
 
-    test('[REGRESSION] button state reflects correct disabled status', () => {
-      createSprintButton('sprint-1', false, false);
-      createSprintButton('sprint-2', false, false);
-
-      const state = getSprintState();
-
-      // All collapsed: Collapse button should be disabled, Expand should be enabled
-      expect(state.allCollapsed).toBe(true);
-      expect(state.allExpanded).toBe(false);
-    });
-
     test('[REGRESSION] all sprints expanded state with only filtered sprints', () => {
-      createSprintButton('sprint-1', true, true);  // Only filtered sprint, expanded
-      createSprintButton('sprint-2', true, true);  // Only filtered sprint, expanded
+      createSprintButton('sprint-1', true, true);  // filtered, expanded
+      createSprintButton('sprint-2', true, true);  // filtered, expanded
 
       const state = getSprintState();
 
-      // All visible sprints are expanded, but we have filtered sprints
+      // No visible sprints → neither allCollapsed nor allExpanded can be true
       expect(state.anyFiltered).toBe(true);
-      expect(findSprintToggleButtons()).toHaveLength(2);
+      expect(state.allExpanded).toBe(false);
+      expect(state.allCollapsed).toBe(false);
     });
   });
 
@@ -460,29 +614,24 @@ describe('Sprint Collapser Content Script', () => {
 
       expect(mockObserver.disconnect).toHaveBeenCalled();
     });
+
+    test('[REGRESSION] should trigger virtual list refresh after applying filter immediately', () => {
+      const scrollContainer = document.createElement('div');
+      scrollContainer.setAttribute('data-testid', 'software-backlog.backlog-content.scrollable');
+      scrollContainer.scrollTop = 0;
+      document.body.appendChild(scrollContainer);
+
+      createSprintButton('sprint-Team-A', true, false);
+      createSprintButton('sprint-Team-B', true, false);
+
+      waitForSprintsAndFilter('Team-A');
+      jest.advanceTimersByTime(50); // fire the 50ms setTimeout inside triggerVirtualListRefresh
+
+      expect(scrollContainer.scrollTop).toBe(1);
+    });
   });
 
   describe('Sprint State Detection with Unknown Values', () => {
-    test('[REGRESSION] should correctly count sprints with explicit true aria-expanded', () => {
-      createSprintButton('sprint-1', true);
-      createSprintButton('sprint-2', true);
-
-      const state = getSprintState();
-
-      expect(state.allExpanded).toBe(true);
-      expect(state.allCollapsed).toBe(false);
-    });
-
-    test('[REGRESSION] should correctly count sprints with explicit false aria-expanded', () => {
-      createSprintButton('sprint-1', false);
-      createSprintButton('sprint-2', false);
-
-      const state = getSprintState();
-
-      expect(state.allCollapsed).toBe(true);
-      expect(state.allExpanded).toBe(false);
-    });
-
     test('[REGRESSION] should not count null aria-expanded as expanded', () => {
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2');  // No aria-expanded attribute
@@ -539,17 +688,6 @@ describe('Sprint Collapser Content Script', () => {
       expect(state.allCollapsed).toBe(false);
     });
 
-    test('[REGRESSION] Expand All button should be disabled only when ALL sprints are explicitly expanded', () => {
-      createSprintButton('sprint-1', true);
-      createSprintButton('sprint-2', true);
-      createSprintButton('sprint-3', true);
-
-      const state = getSprintState();
-
-      // All explicitly expanded - button should be disabled
-      expect(state.allExpanded).toBe(true);
-    });
-
     test('[REGRESSION] Expand All button should NOT be disabled when some sprints have unknown state', () => {
       createSprintButton('sprint-1', true);
       createSprintButton('sprint-2', true);
@@ -559,17 +697,6 @@ describe('Sprint Collapser Content Script', () => {
 
       // Not all explicitly expanded - button should be enabled
       expect(state.allExpanded).toBe(false);
-    });
-
-    test('[REGRESSION] Collapse All button should be disabled only when ALL sprints are explicitly collapsed', () => {
-      createSprintButton('sprint-1', false);
-      createSprintButton('sprint-2', false);
-      createSprintButton('sprint-3', false);
-
-      const state = getSprintState();
-
-      // All explicitly collapsed - button should be disabled
-      expect(state.allCollapsed).toBe(true);
     });
 
     test('[REGRESSION] Collapse All button should NOT be disabled when some sprints have unknown state', () => {
