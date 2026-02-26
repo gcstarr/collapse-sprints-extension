@@ -368,6 +368,32 @@ function isUrlSupported(url) {
   return patterns.some(pattern => pattern.test(url));
 }
 
+const OPTIONAL_ORIGINS = [
+  'https://*.atlassian.net/jira/software/c/projects/*/boards/*/backlog*',
+  'https://*.atlassian.net/jira/software/*/projects/*/boards/*/backlog*',
+  'https://*.atlassian.net/jira/software/*/backlog*',
+];
+
+// Registers the content script for automatic injection on future page loads.
+// Called once after the user grants optional host permission.
+// Dynamically registered scripts persist across browser sessions.
+async function ensureContentScriptRegistered() {
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: ['sprint-collapser'] });
+    if (existing.length === 0) {
+      await chrome.scripting.registerContentScripts([{
+        id: 'sprint-collapser',
+        matches: OPTIONAL_ORIGINS,
+        js: ['content.js'],
+        runAt: 'document_idle',
+      }]);
+      debugLog('Content script registered for auto-injection');
+    }
+  } catch (err) {
+    debugLog('Failed to register content script:', err.message);
+  }
+}
+
 // Check if we're on a supported page when popup loads
 function checkSupportedPage(retries = 5, delay = 200) {
   // Disable action buttons initially until state is loaded
@@ -442,51 +468,85 @@ function checkSupportedPage(retries = 5, delay = 200) {
         return;
       }
 
-      // URL is supported, try to reach the content script
-      debugLog('URL is supported, attempting to reach content script');
-      chrome.tabs.sendMessage(
-        tab.id,
-        { action: 'checkPageSupport' },
-        async (response) => {
-          if (chrome.runtime.lastError || !response) {
-            debugLog('No response:', chrome.runtime.lastError?.message);
-            if (retriesLeft > 0) {
-              debugLog(`Retrying in ${delay}ms...`);
-              setTimeout(() => attemptCheck(retriesLeft - 1), delay);
-            } else {
-              // Retry loop exhausted. The content script may be absent because Jira
-              // used SPA navigation (pushState) — Chrome only auto-injects content
-              // scripts on real page loads. Attempt programmatic injection as a
-              // fallback before showing an error.
-              debugLog('Max retries reached, attempting scripting injection fallback');
-              chrome.scripting.executeScript(
-                { target: { tabId: tab.id }, files: ['content.js'] },
-                () => {
-                  if (chrome.runtime.lastError) {
-                    debugLog('Scripting injection failed:', chrome.runtime.lastError.message);
-                    showError();
-                    return;
-                  }
-                  debugLog('Injected content.js, retrying checkPageSupport');
-                  chrome.tabs.sendMessage(tab.id, { action: 'checkPageSupport' }, async (injectedResponse) => {
-                    if (chrome.runtime.lastError || !injectedResponse) {
-                      debugLog('Still no response after injection');
-                      showError();
-                    } else {
-                      debugLog('Content script responded after injection');
-                      await initializePopup();
-                    }
-                  });
-                }
-              );
-            }
-          } else {
-            // Successful response, initialize popup
-            debugLog('Content script responded, initializing popup');
-            await initializePopup();
-          }
+      // URL is supported — check if optional host permission has been granted
+      chrome.permissions.contains({ origins: OPTIONAL_ORIGINS }, (hasPermission) => {
+        if (!hasPermission) {
+          disableAllControls(true);
+          statusDiv.textContent = '';
+          statusDiv.className = 'status-message';
+          statusDiv.style.marginTop = '16px';
+          const permMsg = document.createElement('p');
+          permMsg.textContent = 'One-time permission needed to access your Jira backlog.';
+          permMsg.style.cssText = 'margin: 0 0 10px 0; font-size: 13px;';
+          statusDiv.appendChild(permMsg);
+          const grantBtn = document.createElement('button');
+          grantBtn.textContent = 'Grant Access';
+          grantBtn.className = 'action-button';
+          grantBtn.addEventListener('click', () => {
+            chrome.permissions.request({ origins: OPTIONAL_ORIGINS }, async (granted) => {
+              statusDiv.textContent = '';
+              statusDiv.style.marginTop = '';
+              if (granted) {
+                await ensureContentScriptRegistered();
+                checkSupportedPage(retries, delay);
+              } else {
+                disableAllControls(true);
+                statusDiv.textContent = 'Permission required to access Jira pages.';
+                statusDiv.className = 'status-message error';
+                statusDiv.style.marginTop = '16px';
+              }
+            });
+          });
+          statusDiv.appendChild(grantBtn);
+          return;
         }
-      );
+
+        // Permission granted — try to reach the content script
+        debugLog('URL is supported, attempting to reach content script');
+        chrome.tabs.sendMessage(
+          tab.id,
+          { action: 'checkPageSupport' },
+          async (response) => {
+            if (chrome.runtime.lastError || !response) {
+              debugLog('No response:', chrome.runtime.lastError?.message);
+              if (retriesLeft > 0) {
+                debugLog(`Retrying in ${delay}ms...`);
+                setTimeout(() => attemptCheck(retriesLeft - 1), delay);
+              } else {
+                // Retry loop exhausted. The content script may be absent because Jira
+                // used SPA navigation (pushState) — Chrome only auto-injects content
+                // scripts on real page loads. Attempt programmatic injection as a
+                // fallback before showing an error.
+                debugLog('Max retries reached, attempting scripting injection fallback');
+                chrome.scripting.executeScript(
+                  { target: { tabId: tab.id }, files: ['content.js'] },
+                  () => {
+                    if (chrome.runtime.lastError) {
+                      debugLog('Scripting injection failed:', chrome.runtime.lastError.message);
+                      showError();
+                      return;
+                    }
+                    debugLog('Injected content.js, retrying checkPageSupport');
+                    chrome.tabs.sendMessage(tab.id, { action: 'checkPageSupport' }, async (injectedResponse) => {
+                      if (chrome.runtime.lastError || !injectedResponse) {
+                        debugLog('Still no response after injection');
+                        showError();
+                      } else {
+                        debugLog('Content script responded after injection');
+                        await initializePopup();
+                      }
+                    });
+                  }
+                );
+              }
+            } else {
+              // Successful response, initialize popup
+              debugLog('Content script responded, initializing popup');
+              await initializePopup();
+            }
+          }
+        );
+      });
     });
   };
 
