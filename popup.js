@@ -159,13 +159,25 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
 async function removeSavedFilter(filterText) {
   cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText).sort();
   const updates = { [SAVED_FILTERS_KEY]: cachedSavedFilters };
+  let wasActive = false;
   if (cachedCurrentFilter === filterText) {
+    wasActive = true;
     cachedCurrentFilter = '';
     updates[CURRENT_FILTER_KEY] = '';
+    document.getElementById('filterInput').value = '';
+    document.getElementById('filterInput').disabled = false;
   }
   await chrome.storage.local.set(updates);
   displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
   updateSaveButtonState();
+  if (wasActive) {
+    const tab = await getActiveTab();
+    if (tab) {
+      chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, () => {
+        updateActionButtonStates(tab.id);
+      });
+    }
+  }
 }
 
 async function saveFilter(filterText) {
@@ -174,9 +186,19 @@ async function saveFilter(filterText) {
     return;
   }
 
+  const storageUpdates = {};
+  let wasActive = false;
+
   if (cachedSavedFilters.includes(filterText)) {
     // Remove if already saved
     cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText);
+    if (cachedCurrentFilter === filterText) {
+      wasActive = true;
+      cachedCurrentFilter = '';
+      storageUpdates[CURRENT_FILTER_KEY] = '';
+      document.getElementById('filterInput').value = '';
+      document.getElementById('filterInput').disabled = false;
+    }
   } else {
     // Add new filter
     if (cachedSavedFilters.length >= MAX_SAVED_FILTERS) {
@@ -189,9 +211,18 @@ async function saveFilter(filterText) {
   // Sort alphabetically before saving
   cachedSavedFilters.sort();
 
-  await chrome.storage.local.set({ [SAVED_FILTERS_KEY]: cachedSavedFilters });
+  storageUpdates[SAVED_FILTERS_KEY] = cachedSavedFilters;
+  await chrome.storage.local.set(storageUpdates);
   displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
   updateSaveButtonState();
+  if (wasActive) {
+    const tab = await getActiveTab();
+    if (tab) {
+      chrome.tabs.sendMessage(tab.id, { action: 'showAllSprints' }, () => {
+        updateActionButtonStates(tab.id);
+      });
+    }
+  }
 }
 
 // Synchronous: uses in-memory cache instead of a storage read

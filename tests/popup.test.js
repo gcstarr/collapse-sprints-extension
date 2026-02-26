@@ -29,7 +29,9 @@ function setupChromeMocks() {
   global.chrome = {
     tabs: {
       query: jest.fn((_, cb) => {
-        if (cb) cb([{ id: 1, url: BACKLOG_URL }]);
+        const tabs = [{ id: 1, url: BACKLOG_URL }];
+        if (cb) { cb(tabs); return; }
+        return Promise.resolve(tabs);
       }),
       sendMessage: jest.fn((_tabId, msg, cb) => {
         if (msg.action === 'getSprintState')
@@ -146,6 +148,53 @@ describe('Sprint Collapser Popup Functions', () => {
       await popup.saveFilter('Filter 11');
       expect(global.chrome.storage.local.set.mock.calls.length).toBe(callsBefore);
     });
+
+    test('[REGRESSION] clears and re-enables filter input when the active saved filter is removed via save button', async () => {
+      // Save 'Team A' and render chip as unselected
+      await popup.saveFilter('Team A');
+      popup.displaySavedFilters(['Team A']);
+
+      // Click the chip to select it — synchronously sets cachedCurrentFilter before first await
+      document.querySelector('.filter-chip').click();
+
+      // Flush: storage.set → filterInput setup → getActiveTab → sendMessage
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // cachedCurrentFilter='Team A', filterInput.value='Team A', disabled=true
+      // Now toggle it off via saveFilter (same path as clicking the ★ button)
+      await popup.saveFilter('Team A');
+
+      expect(document.getElementById('filterInput').value).toBe('');
+      expect(document.getElementById('filterInput').disabled).toBe(false);
+      const showAllCalls = global.chrome.tabs.sendMessage.mock.calls.filter(([, msg]) => msg.action === 'showAllSprints');
+      expect(showAllCalls.length).toBe(1);
+    });
+
+    test('[REGRESSION] does not clear filter input when a non-active saved filter is removed via save button', async () => {
+      // Save two filters; select 'Team B' via chip click
+      await popup.saveFilter('Team A');
+      await popup.saveFilter('Team B');
+      popup.displaySavedFilters(['Team A', 'Team B']);
+
+      const chips = document.querySelectorAll('.filter-chip');
+      chips[1].click(); // click Team B chip
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // cachedCurrentFilter='Team B' — now remove Team A via saveFilter
+      await popup.saveFilter('Team A');
+
+      // Team B is still active — input should remain populated and disabled
+      expect(document.getElementById('filterInput').value).toBe('Team B');
+      expect(document.getElementById('filterInput').disabled).toBe(true);
+      const showAllCalls = global.chrome.tabs.sendMessage.mock.calls.filter(([, msg]) => msg.action === 'showAllSprints');
+      expect(showAllCalls.length).toBe(0);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -167,6 +216,54 @@ describe('Sprint Collapser Popup Functions', () => {
       const lastCall = global.chrome.storage.local.set.mock.calls.at(-1)[0];
       expect(Object.keys(lastCall)).not.toContain('currentFilter');
       expect(lastCall.savedFilters).toEqual([]);
+    });
+
+    test('[REGRESSION] clears and re-enables filter input when the active filter is deleted', async () => {
+      // Save 'Team A' and render its chip as unselected
+      await popup.saveFilter('Team A');
+      popup.displaySavedFilters(['Team A']);
+
+      // Click the chip — the handler synchronously sets cachedCurrentFilter = 'Team A'
+      // before its first await, so it is reliably set before removeSavedFilter runs.
+      document.querySelector('.filter-chip').click();
+
+      // Flush async continuations: storage.set → filterInput setup → getActiveTab → sendMessage
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // At this point cachedCurrentFilter='Team A', filterInput.value='Team A', disabled=true
+      await popup.removeSavedFilter('Team A');
+
+      expect(document.getElementById('filterInput').value).toBe('');
+      expect(document.getElementById('filterInput').disabled).toBe(false);
+      const showAllCalls = global.chrome.tabs.sendMessage.mock.calls.filter(([, msg]) => msg.action === 'showAllSprints');
+      expect(showAllCalls.length).toBe(1);
+    });
+
+    test('[REGRESSION] does not clear filter input when a non-active saved filter is deleted', async () => {
+      // Save two filters; select 'Team B' via chip click so cachedCurrentFilter='Team B'
+      await popup.saveFilter('Team A');
+      await popup.saveFilter('Team B');
+      popup.displaySavedFilters(['Team A', 'Team B']);
+
+      // Click the Team B chip (second chip) to make it the active filter
+      const chips = document.querySelectorAll('.filter-chip');
+      chips[1].click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // cachedCurrentFilter='Team B', filterInput.value='Team B', disabled=true
+      await popup.removeSavedFilter('Team A');
+
+      // Team B is still active — input should remain populated and disabled
+      expect(document.getElementById('filterInput').value).toBe('Team B');
+      expect(document.getElementById('filterInput').disabled).toBe(true);
+      const showAllCalls = global.chrome.tabs.sendMessage.mock.calls.filter(([, msg]) => msg.action === 'showAllSprints');
+      expect(showAllCalls.length).toBe(0);
     });
   });
 
