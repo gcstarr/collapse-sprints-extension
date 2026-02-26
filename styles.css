@@ -256,3 +256,18 @@ h3 {
 .filter-chip-remove:hover {
   color: #172b4d;
 }
+
+.retry-btn {
+  padding: 2px 8px;
+  background-color: #601d0e;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background-color: #7a2510;
+}
