@@ -96,9 +96,10 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
     if (isSelected) {
       chip.classList.add('selected');
     }
+    chip.title = isSelected ? 'Click to deselect' : 'Click to apply filter';
 
     const text = document.createElement('span');
-    text.textContent = filter;
+    text.textContent = isSelected ? `✓ ${filter}` : filter;
     text.style.marginRight = '2px';
 
     const removeBtn = document.createElement('button');

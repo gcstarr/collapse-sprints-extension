@@ -191,6 +191,26 @@ describe('Sprint Collapser Popup Functions', () => {
       expect(chips[0].classList.contains('selected')).toBe(true);
       expect(chips[1].classList.contains('selected')).toBe(false);
     });
+
+    test('selected chip label has ✓ prefix; unselected chip label does not', () => {
+      popup.displaySavedFilters(['Team A', 'Team B'], 'Team A');
+      const chips = document.getElementById('savedFilters').querySelectorAll('.filter-chip');
+      expect(chips[0].querySelector('span').textContent).toBe('✓ Team A');
+      expect(chips[1].querySelector('span').textContent).toBe('Team B');
+    });
+
+    test('selected chip title is "Click to deselect"; unselected chip title is "Click to apply filter"', () => {
+      popup.displaySavedFilters(['Team A', 'Team B'], 'Team A');
+      const chips = document.getElementById('savedFilters').querySelectorAll('.filter-chip');
+      expect(chips[0].title).toBe('Click to deselect');
+      expect(chips[1].title).toBe('Click to apply filter');
+    });
+
+    test('all chips have "Click to apply filter" title when no filter is active', () => {
+      popup.displaySavedFilters(['Team A', 'Team B']);
+      const chips = document.getElementById('savedFilters').querySelectorAll('.filter-chip');
+      chips.forEach(chip => expect(chip.title).toBe('Click to apply filter'));
+    });
   });
 
   // -----------------------------------------------------------------------
