@@ -40,6 +40,9 @@ function setupChromeMocks() {
           cb({ success: true });
       }),
     },
+    scripting: {
+      executeScript: jest.fn((_, cb) => cb && cb()),
+    },
     storage: {
       local: {
         get: jest.fn(() => Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false })),
@@ -434,10 +437,13 @@ describe('checkSupportedPage', () => {
           if (cb) { cb(tabs); return; }
           return Promise.resolve(tabs);
         }),
-        sendMessage: jest.fn((tabId, msg, cb) => {
+        sendMessage: jest.fn((_tabId, msg, cb) => {
           if (msg.action === 'checkPageSupport') cb({ supported: true });
           else if (msg.action === 'getSprintState') cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
         }),
+      },
+      scripting: {
+        executeScript: jest.fn((_, cb) => cb && cb()),
       },
       storage: {
         local: {
@@ -486,6 +492,45 @@ describe('checkSupportedPage', () => {
 
   test('[REGRESSION] should show content script error if URL is valid but script never responds', () => {
     global.chrome.tabs.sendMessage = jest.fn((_tabId, _msg, cb) => cb(undefined));
+
+    checkSupportedPage(2, 100);
+    jest.runAllTimers();
+
+    expect(document.getElementById('status').textContent).toContain('Content script not loaded');
+  });
+
+  test('[REGRESSION] should recover silently via scripting injection when content script is absent (SPA navigation)', () => {
+    // Simulate SPA navigation: content script never responds until after injection
+    let injected = false;
+    global.chrome.scripting.executeScript = jest.fn((_, cb) => {
+      injected = true;
+      if (cb) cb(); // injection succeeds, no lastError
+    });
+    global.chrome.tabs.sendMessage = jest.fn((_tabId, _msg, cb) => {
+      // Responds only after injection (i.e., after executeScript has run)
+      cb(injected ? { supported: true } : undefined);
+    });
+
+    checkSupportedPage(2, 100);
+    jest.runAllTimers();
+
+    // Recovered via injection — no error shown (status is cleared synchronously before async init)
+    expect(document.getElementById('status').textContent).toBe('');
+    // Verify executeScript was invoked with the content script file
+    expect(global.chrome.scripting.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ files: ['content.js'] }),
+      expect.any(Function)
+    );
+  });
+
+  test('[REGRESSION] should show content script error when scripting injection itself fails', () => {
+    // Simulate injection being denied (e.g., extension lacks host permissions for the tab)
+    global.chrome.tabs.sendMessage = jest.fn((_tabId, _msg, cb) => cb(undefined));
+    global.chrome.scripting.executeScript = jest.fn((_, cb) => {
+      global.chrome.runtime.lastError = { message: 'Cannot access tab' };
+      if (cb) cb();
+      global.chrome.runtime.lastError = null;
+    });
 
     checkSupportedPage(2, 100);
     jest.runAllTimers();

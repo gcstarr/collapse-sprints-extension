@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Sprint Collapser",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Collapse, expand, and filter sprints when multiple teams share a Jira board",
   "permissions": [
     "activeTab",
+    "scripting",
     "storage"
   ],
   "content_scripts": [

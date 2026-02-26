@@ -344,6 +344,42 @@ function checkSupportedPage(retries = 5, delay = 200) {
   document.getElementById('filterBtn').disabled = true;
   document.getElementById('showAllBtn').disabled = true;
 
+  // Show a neutral loading message while retries are in-flight
+  const statusDiv = document.getElementById('status');
+  statusDiv.textContent = 'Connecting to page...';
+  statusDiv.className = 'status-message';
+  statusDiv.style.marginTop = '';
+
+  // Show error + retry button when content script can't be reached
+  function showError() {
+    disableAllControls(true);
+    statusDiv.textContent = '';
+    statusDiv.className = 'status-message error';
+    statusDiv.style.marginTop = '16px';
+    statusDiv.appendChild(document.createTextNode('Content script not loaded. '));
+    const retryBtn = document.createElement('button');
+    retryBtn.textContent = 'Retry';
+    retryBtn.className = 'retry-btn';
+    retryBtn.addEventListener('click', () => {
+      statusDiv.textContent = '';
+      statusDiv.className = 'status-message';
+      statusDiv.style.marginTop = '';
+      checkSupportedPage(retries, delay);
+    });
+    statusDiv.appendChild(retryBtn);
+  }
+
+  // Initialize popup after content script confirms it is ready
+  async function initializePopup() {
+    statusDiv.textContent = '';
+    statusDiv.className = 'status-message';
+    statusDiv.style.marginTop = '';
+    await initializeFilterState();
+    updateActionButtonStates(() => {
+      debugLog('Popup initialized and ready');
+    });
+  }
+
   const totalRetries = retries;
 
   // Re-query the active tab on each attempt so a stale URL from an in-progress
@@ -352,7 +388,12 @@ function checkSupportedPage(retries = 5, delay = 200) {
     debugLog(`Attempting page check (${totalRetries - retriesLeft + 1}/${totalRetries})`);
 
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      if (!tab) return;
+      if (!tab) {
+        statusDiv.textContent = '';
+        statusDiv.className = 'status-message';
+        statusDiv.style.marginTop = '';
+        return;
+      }
 
       const urlSupported = isUrlSupported(tab.url);
 
@@ -362,7 +403,6 @@ function checkSupportedPage(retries = 5, delay = 200) {
           setTimeout(() => attemptCheck(retriesLeft - 1), delay);
         } else {
           disableAllControls(true);
-          const statusDiv = document.getElementById('status');
           statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
           statusDiv.className = 'status-message error';
           statusDiv.style.marginTop = '16px';
@@ -382,20 +422,36 @@ function checkSupportedPage(retries = 5, delay = 200) {
               debugLog(`Retrying in ${delay}ms...`);
               setTimeout(() => attemptCheck(retriesLeft - 1), delay);
             } else {
-              debugLog('Max retries reached, content script not responding');
-              disableAllControls(true);
-              const statusDiv = document.getElementById('status');
-              statusDiv.textContent = 'Content script not loaded. Try refreshing the page.';
-              statusDiv.className = 'status-message error';
-              statusDiv.style.marginTop = '16px';
+              // Retry loop exhausted. The content script may be absent because Jira
+              // used SPA navigation (pushState) — Chrome only auto-injects content
+              // scripts on real page loads. Attempt programmatic injection as a
+              // fallback before showing an error.
+              debugLog('Max retries reached, attempting scripting injection fallback');
+              chrome.scripting.executeScript(
+                { target: { tabId: tab.id }, files: ['content.js'] },
+                () => {
+                  if (chrome.runtime.lastError) {
+                    debugLog('Scripting injection failed:', chrome.runtime.lastError.message);
+                    showError();
+                    return;
+                  }
+                  debugLog('Injected content.js, retrying checkPageSupport');
+                  chrome.tabs.sendMessage(tab.id, { action: 'checkPageSupport' }, async (injectedResponse) => {
+                    if (chrome.runtime.lastError || !injectedResponse) {
+                      debugLog('Still no response after injection');
+                      showError();
+                    } else {
+                      debugLog('Content script responded after injection');
+                      await initializePopup();
+                    }
+                  });
+                }
+              );
             }
           } else {
             // Successful response, initialize popup
             debugLog('Content script responded, initializing popup');
-            await initializeFilterState();
-            updateActionButtonStates(() => {
-              debugLog('Popup initialized and ready');
-            });
+            await initializePopup();
           }
         }
       );

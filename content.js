@@ -7,8 +7,11 @@ function debugLog(...args) {
   }
 }
 
-// Guard chrome API calls so this module can be imported in tests
-if (typeof chrome !== 'undefined' && chrome.storage) {
+// Guard chrome API calls so this module can be imported in tests.
+// Use flags to prevent double-initialization if injected programmatically more than once
+// (e.g., via chrome.scripting.executeScript as a fallback for SPA navigation).
+if (typeof chrome !== 'undefined' && chrome.storage && !window.__sprintCollapserInited) {
+  window.__sprintCollapserInited = true;
   // Load debug mode from storage on script initialization
   chrome.storage.local.get(['debugMode', 'currentFilter'], (data) => {
     debugModeEnabled = data.debugMode || false;
@@ -350,7 +353,8 @@ function waitForSprintsAndFilter(filterText) {
 }
 
 // Listen for messages from the popup
-if (typeof chrome !== 'undefined' && chrome.runtime) {
+if (typeof chrome !== 'undefined' && chrome.runtime && !window.__sprintCollapserListening) {
+  window.__sprintCollapserListening = true;
   // Actions that call sendResponse asynchronously — listener must return true for these
   // to keep the message channel open.
   const asyncActions = new Set(['collapseAllSprints', 'expandAllSprints']);
