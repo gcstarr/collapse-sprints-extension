@@ -561,12 +561,6 @@ describe('checkSupportedPage', () => {
       },
       scripting: {
         executeScript: jest.fn((_, cb) => cb && cb()),
-        getRegisteredContentScripts: jest.fn(() => Promise.resolve([])),
-        registerContentScripts: jest.fn(() => Promise.resolve()),
-      },
-      permissions: {
-        contains: jest.fn((_, cb) => cb(true)),
-        request: jest.fn((_, cb) => cb(true)),
       },
       storage: {
         local: {
@@ -681,15 +675,4 @@ describe('checkSupportedPage', () => {
     expect(document.getElementById('collapseBtn').disabled).toBe(true);
   });
 
-  test('[REGRESSION] should show grant access button when optional host permission has not been granted', () => {
-    global.chrome.permissions.contains = jest.fn((_, cb) => cb(false));
-
-    checkSupportedPage(1, 100);
-    jest.runAllTimers();
-
-    const statusDiv = document.getElementById('status');
-    expect(statusDiv.textContent).toContain('One-time permission needed');
-    expect(statusDiv.querySelector('button').textContent).toBe('Grant Access');
-    expect(document.getElementById('collapseBtn').disabled).toBe(true);
-  });
 });
