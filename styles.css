@@ -35,6 +35,56 @@ body {
   color: #172b4d;
 }
 
+.settings-btn {
+  position: absolute;
+  top: 8px;
+  right: 38px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #626f86;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-btn:hover {
+  color: #172b4d;
+}
+
+.settings-btn.active {
+  color: #0052cc;
+}
+
+.settings-row {
+  padding: 4px 0;
+}
+
+.settings-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: #172b4d;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.settings-label input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 2px 0 0 0;
+  accent-color: #0052cc;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 h2 {
   margin: 0 0 16px 0;
   font-size: 16px;
@@ -270,4 +320,65 @@ h3 {
 
 .retry-btn:hover {
   background-color: #7a2510;
+}
+
+.confirm-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border-radius: 4px;
+}
+
+.confirm-dialog {
+  background: white;
+  border-radius: 6px;
+  padding: 20px 16px 14px;
+  width: 220px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.confirm-message {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: #172b4d;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.confirm-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.confirm-btn-cancel {
+  background: #dfe1e6;
+  color: #172b4d;
+}
+
+.confirm-btn-cancel:hover {
+  background: #c9cace;
+}
+
+.confirm-btn-ok {
+  background: #de350b;
+  color: white;
+}
+
+.confirm-btn-ok:hover {
+  background: #bf2600;
 }
