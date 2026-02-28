@@ -17,7 +17,6 @@ let cachedAutoApplyOnLoad = true;
 // URL and tab ID of the active Jira backlog tab — set once checkSupportedPage confirms a valid URL.
 // Storage keys are scoped to this URL so different backlogs have independent favorites.
 let currentTabUrl = '';
-let currentTabId = null;
 
 async function loadDebugMode() {
   const data = await chrome.storage.local.get(DEBUG_MODE_KEY);
@@ -523,7 +522,6 @@ function checkSupportedPage(retries = 5, delay = 200) {
       // URL is supported, try to reach the content script
       debugLog('URL is supported, attempting to reach content script');
       currentTabUrl = tab.url;
-      currentTabId = tab.id;
       chrome.tabs.sendMessage(
         tab.id,
         { action: 'checkPageSupport' },

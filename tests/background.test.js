@@ -64,9 +64,9 @@ describe('Background Service Worker', () => {
     jest.clearAllMocks();
     setupChromeMocks();
     require('../background.js');
-    onUpdated  = chrome.tabs.onUpdated.addListener.mock.calls[0][0];
-    onActivated= chrome.tabs.onActivated.addListener.mock.calls[0][0];
-    onMessage  = chrome.runtime.onMessage.addListener.mock.calls[0][0];
+    onUpdated  = global.chrome.tabs.onUpdated.addListener.mock.calls[0][0];
+    onActivated= global.chrome.tabs.onActivated.addListener.mock.calls[0][0];
+    onMessage  = global.chrome.runtime.onMessage.addListener.mock.calls[0][0];
   });
 
   // -------------------------------------------------------------------------
@@ -76,7 +76,7 @@ describe('Background Service Worker', () => {
   describe('isBacklogUrl URL pattern matching', () => {
     function expectBacklog(url) {
       onUpdated(1, { url, status: 'loading' }, {});
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
     }
 
     test('[REGRESSION] pattern 1 — /c/projects/*/boards/*/backlog', () => {
@@ -99,7 +99,7 @@ describe('Background Service Worker', () => {
       // BOARD_URL + status=loading hits setGreyIcon (async), not clearFilterIcon.
       // clearFilterIcon calls setPopup('popup.html') — verify that did NOT happen.
       onUpdated(1, { url: BOARD_URL, status: 'loading' }, { url: BOARD_URL });
-      expect(chrome.action.setPopup).not.toHaveBeenCalledWith(
+      expect(global.chrome.action.setPopup).not.toHaveBeenCalledWith(
         expect.objectContaining({ popup: 'popup.html' })
       );
     });
@@ -111,8 +111,8 @@ describe('Background Service Worker', () => {
   describe('tabs.onUpdated — full page load to backlog URL', () => {
     test('[REGRESSION] blue icon set immediately when backlog URL starts loading (changeInfo.url present)', () => {
       onUpdated(1, { url: BACKLOG_URL, status: 'loading' }, { url: BACKLOG_URL });
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
-      expect(chrome.action.setIcon).toHaveBeenCalledWith(
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
+      expect(global.chrome.action.setIcon).toHaveBeenCalledWith(
         expect.objectContaining({ path: expect.any(Object), tabId: 1 })
       );
     });
@@ -120,12 +120,12 @@ describe('Background Service Worker', () => {
     test('[REGRESSION] blue icon set when tab.url resolves to backlog on status=loading (no changeInfo.url)', () => {
       // Chrome omits changeInfo.url for repeat status events; tab.url is used instead.
       onUpdated(1, { status: 'loading' }, { url: BACKLOG_URL });
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
     });
 
     test('[REGRESSION] content.js is NOT injected on status=loading (manifest handles injection)', () => {
       onUpdated(1, { url: BACKLOG_URL, status: 'loading' }, { url: BACKLOG_URL });
-      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+      expect(global.chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
   });
 
@@ -136,7 +136,7 @@ describe('Background Service Worker', () => {
   describe('[REGRESSION] tabs.onUpdated — status=complete injection (Jira redirect-chain fix)', () => {
     test('injects content.js when status=complete and tab.url is a backlog URL', () => {
       onUpdated(1, { status: 'complete' }, { url: BACKLOG_URL });
-      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+      expect(global.chrome.scripting.executeScript).toHaveBeenCalledWith(
         expect.objectContaining({ target: { tabId: 1 }, files: ['content.js'] }),
         expect.any(Function)
       );
@@ -144,7 +144,7 @@ describe('Background Service Worker', () => {
 
     test('injects content.js when tab.url has query parameters after /backlog', () => {
       onUpdated(1, { status: 'complete' }, { url: BACKLOG_QUERY });
-      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+      expect(global.chrome.scripting.executeScript).toHaveBeenCalledWith(
         expect.objectContaining({ target: { tabId: 1 }, files: ['content.js'] }),
         expect.any(Function)
       );
@@ -152,12 +152,12 @@ describe('Background Service Worker', () => {
 
     test('does NOT inject when status=complete but tab.url is a board (non-backlog) URL', () => {
       onUpdated(1, { status: 'complete' }, { url: BOARD_URL });
-      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+      expect(global.chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
 
     test('does NOT inject when status=complete and tab.url is undefined (non-atlassian tab)', () => {
       onUpdated(1, { status: 'complete' }, {});
-      expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+      expect(global.chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
 
     test('injects exactly once after a full Jira redirect chain (multiple status=loading, then complete)', () => {
@@ -174,8 +174,8 @@ describe('Background Service Worker', () => {
       // Page fully settled:
       onUpdated(tabId, {                    status: 'complete'}, { url: BACKLOG_URL });
 
-      expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
-      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+      expect(global.chrome.scripting.executeScript).toHaveBeenCalledTimes(1);
+      expect(global.chrome.scripting.executeScript).toHaveBeenCalledWith(
         expect.objectContaining({ target: { tabId }, files: ['content.js'] }),
         expect.any(Function)
       );
@@ -188,15 +188,15 @@ describe('Background Service Worker', () => {
   describe('tabs.onUpdated — SPA navigation', () => {
     test('[REGRESSION] blue icon set on SPA navigation to backlog URL', () => {
       onUpdated(1, { url: BACKLOG_URL }, {});
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
-      expect(chrome.action.setIcon).toHaveBeenCalledWith(
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 1 });
+      expect(global.chrome.action.setIcon).toHaveBeenCalledWith(
         expect.objectContaining({ path: expect.any(Object), tabId: 1 })
       );
     });
 
     test('[REGRESSION] content.js injected on SPA navigation to backlog URL', () => {
       onUpdated(1, { url: BACKLOG_URL }, {});
-      expect(chrome.scripting.executeScript).toHaveBeenCalledWith(
+      expect(global.chrome.scripting.executeScript).toHaveBeenCalledWith(
         expect.objectContaining({ target: { tabId: 1 }, files: ['content.js'] }),
         expect.any(Function)
       );
@@ -218,27 +218,27 @@ describe('Background Service Worker', () => {
   describe('runtime.onMessage routing', () => {
     test('[REGRESSION] clearFilterIcon from content script (sender.tab.id) sets blue icon', () => {
       onMessage({ action: 'clearFilterIcon' }, { tab: { id: 5 } });
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 5 });
-      expect(chrome.action.setIcon).toHaveBeenCalledWith(
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 5 });
+      expect(global.chrome.action.setIcon).toHaveBeenCalledWith(
         expect.objectContaining({ path: expect.any(Object), tabId: 5 })
       );
     });
 
     test('[REGRESSION] clearFilterIcon from popup (explicit message.tabId) sets blue icon', () => {
       onMessage({ action: 'clearFilterIcon', tabId: 7 }, {});
-      expect(chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 7 });
+      expect(global.chrome.action.setPopup).toHaveBeenCalledWith({ popup: 'popup.html', tabId: 7 });
     });
 
     test('[REGRESSION] message.tabId takes precedence over sender.tab.id', () => {
       onMessage({ action: 'clearFilterIcon', tabId: 7 }, { tab: { id: 5 } });
-      expect(chrome.action.setIcon).toHaveBeenCalledWith(
+      expect(global.chrome.action.setIcon).toHaveBeenCalledWith(
         expect.objectContaining({ tabId: 7 })
       );
     });
 
     test('[REGRESSION] ignores message when neither message.tabId nor sender.tab.id is present', () => {
       onMessage({ action: 'clearFilterIcon' }, {});
-      expect(chrome.action.setIcon).not.toHaveBeenCalled();
+      expect(global.chrome.action.setIcon).not.toHaveBeenCalled();
     });
   });
 
@@ -251,7 +251,7 @@ describe('Background Service Worker', () => {
       onMessage({ action: 'clearFilterIcon', tabId: 3 }, {});
       jest.clearAllMocks(); // reset call counts; tab 3 remains in _activeTabIds
 
-      chrome.tabs.get = jest.fn((id, cb) => cb({ url: undefined }));
+      global.chrome.tabs.get = jest.fn((_id, cb) => cb({ url: undefined }));
       onActivated({ tabId: 3 });
 
       // setGreyIcon calls fetch() synchronously before its first await, so a non-call

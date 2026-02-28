@@ -14,7 +14,7 @@ export default [
 
   // Extension source files (browser + Chrome extension environment)
   {
-    files: ['content.js', 'popup.js'],
+    files: ['content.js', 'popup.js', 'background.js'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: {
