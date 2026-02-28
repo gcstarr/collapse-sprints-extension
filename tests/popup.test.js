@@ -8,20 +8,47 @@ const NON_BACKLOG_URL = 'https://example.atlassian.net/jira/boards';
 
 const POPUP_DOM = `
   <div class="popup-container">
+    <button id="settingsBtn" class="settings-btn" title="Settings">⚙</button>
     <button id="closeBtn" class="close-btn" title="Close">×</button>
-    <h2>Sprint Collapser</h2>
-    <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
-    <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
-    <div class="divider"></div>
-    <h3>Filter Sprints</h3>
-    <div class="filter-input-wrapper">
-      <input type="text" id="filterInput" class="filter-input" placeholder="Enter sprint name filter...">
-      <button id="saveFilterBtn" class="save-filter-btn" title="Save filter"></button>
+    <div id="mainContent">
+      <h2>Sprint Collapser</h2>
+      <button id="collapseBtn" class="action-button">Collapse All Sprints</button>
+      <button id="expandBtn" class="action-button secondary">Expand All Sprints</button>
+      <div class="divider"></div>
+      <h3>Filter Sprints</h3>
+      <div class="filter-input-wrapper">
+        <input type="text" id="filterInput" class="filter-input" placeholder="Enter sprint name filter...">
+        <button id="saveFilterBtn" class="save-filter-btn" title="Save filter"></button>
+      </div>
+      <div id="savedFilters" class="saved-filters"></div>
+      <button id="filterBtn" class="action-button filter">Hide Non-Matching</button>
+      <button id="showAllBtn" class="action-button secondary">Show All Sprints</button>
+      <div id="status" class="status-message"></div>
     </div>
-    <div id="savedFilters" class="saved-filters"></div>
-    <button id="filterBtn" class="action-button filter">Hide Non-Matching</button>
-    <button id="showAllBtn" class="action-button secondary">Show All Sprints</button>
-    <div id="status" class="status-message"></div>
+    <div id="settingsPanel" style="display:none">
+      <h2>Settings</h2>
+      <div class="settings-row">
+        <label class="settings-label">
+          <input type="checkbox" id="autoApplyToggle" checked>
+          Auto-apply last filter when opening popup
+        </label>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">
+          <input type="checkbox" id="autoApplyOnLoadToggle" checked>
+          Auto-apply filter on page load (without opening popup)
+        </label>
+      </div>
+    </div>
+    <div id="confirmOverlay" class="confirm-overlay">
+      <div class="confirm-dialog">
+        <p id="confirmMessage" class="confirm-message"></p>
+        <div class="confirm-actions">
+          <button id="confirmCancelBtn" class="confirm-btn confirm-btn-cancel">Cancel</button>
+          <button id="confirmOkBtn" class="confirm-btn confirm-btn-ok">Delete</button>
+        </div>
+      </div>
+    </div>
   </div>
 `;
 
@@ -45,13 +72,17 @@ function setupChromeMocks() {
     scripting: {
       executeScript: jest.fn((_, cb) => cb && cb()),
     },
+    action: {
+      setBadgeText: jest.fn(),
+      setBadgeBackgroundColor: jest.fn(),
+    },
     storage: {
       local: {
         get: jest.fn(() => Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false })),
         set: jest.fn(() => Promise.resolve()),
       },
     },
-    runtime: { lastError: null },
+    runtime: { lastError: null, sendMessage: jest.fn() },
   };
 }
 
@@ -448,6 +479,32 @@ describe('Sprint Collapser Popup Functions', () => {
         done();
       });
     });
+
+    test('[REGRESSION] sends setFilterIcon message when a filter is active on the page', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: true });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(global.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'setFilterIcon', tabId: 1 })
+        );
+        done();
+      });
+    });
+
+    test('[REGRESSION] sends clearFilterIcon message when no filter is active on the page', (done) => {
+      global.chrome.tabs.sendMessage = jest.fn((_tabId, msg, cb) => {
+        if (msg.action === 'getSprintState')
+          cb({ allCollapsed: false, allExpanded: false, anyFiltered: false });
+      });
+      popup.updateActionButtonStates(1, () => {
+        expect(global.chrome.runtime.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'clearFilterIcon', tabId: 1 })
+        );
+        done();
+      });
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -562,13 +619,17 @@ describe('checkSupportedPage', () => {
       scripting: {
         executeScript: jest.fn((_, cb) => cb && cb()),
       },
+      action: {
+        setBadgeText: jest.fn(),
+        setBadgeBackgroundColor: jest.fn(),
+      },
       storage: {
         local: {
           get: jest.fn(() => Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false })),
           set: jest.fn(() => Promise.resolve()),
         },
       },
-      runtime: { lastError: null },
+      runtime: { lastError: null, sendMessage: jest.fn() },
     };
 
     ({ checkSupportedPage } = require('../popup.js'));
@@ -673,6 +734,24 @@ describe('checkSupportedPage', () => {
     // Silent no-op: no error status, controls remain disabled (set at the start of checkSupportedPage)
     expect(document.getElementById('status').textContent).toBe('');
     expect(document.getElementById('collapseBtn').disabled).toBe(true);
+  });
+
+  test('autoApplyOnLoadToggle defaults to checked when autoApplyOnLoad is not in storage', async () => {
+    // Default storage mock returns nothing for autoApplyOnLoad — should default to true
+    checkSupportedPage(1, 100);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.getElementById('autoApplyOnLoadToggle').checked).toBe(true);
+  });
+
+  test('autoApplyOnLoadToggle is unchecked when storage has autoApplyOnLoad: false', async () => {
+    global.chrome.storage.local.get = jest.fn(() =>
+      Promise.resolve({ savedFilters: [], currentFilter: '', debugMode: false, autoApplyOnLoad: false })
+    );
+    checkSupportedPage(1, 100);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.getElementById('autoApplyOnLoadToggle').checked).toBe(false);
   });
 
 });

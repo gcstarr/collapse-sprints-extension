@@ -1,5 +1,7 @@
 // Debug logging helper
-let debugModeEnabled = false;
+// var used intentionally: re-declaration is silently ignored if content.js is ever
+// injected more than once into the same context, whereas let/const throw a SyntaxError.
+var debugModeEnabled = false;
 
 function debugLog(...args) {
   if (debugModeEnabled) {
@@ -12,15 +14,27 @@ function debugLog(...args) {
 // (e.g., via chrome.scripting.executeScript as a fallback for SPA navigation).
 if (typeof chrome !== 'undefined' && chrome.storage && !window.__sprintCollapserInited) {
   window.__sprintCollapserInited = true;
-  // Load debug mode from storage on script initialization
-  chrome.storage.local.get(['debugMode', 'currentFilter'], (data) => {
+  console.log('[SC] content.js init on', window.location.href);
+  // Immediately mark the icon active — we're confirmed on a backlog page.  Sending
+  // clearFilterIcon here (before the async storage read) ensures the icon turns blue
+  // right away on full page loads, rather than waiting for sprint elements to be found.
+  chrome.runtime.sendMessage({ action: 'clearFilterIcon' });
+  // Use the same URL-scoped key that popup.js writes so the filter persists across page loads.
+  const _normalized = window.location.origin + window.location.pathname.replace(/\/$/, '');
+  const _currentFilterKey = `currentFilter_${_normalized}`;
+  // Load debug mode, current filter, and auto-apply-on-load setting from storage
+  chrome.storage.local.get(['debugMode', _currentFilterKey, 'autoApplyOnLoad'], (data) => {
     debugModeEnabled = data.debugMode || false;
     debugLog('Content script loaded, debug mode:', debugModeEnabled);
     debugLog('Content script loaded and ready!');
-    if (data.currentFilter) {
-      debugLog('Restoring filter on page load:', data.currentFilter);
-      waitForSprintsAndFilter(data.currentFilter);
+    const autoApplyOnLoad = data.autoApplyOnLoad !== undefined ? data.autoApplyOnLoad : true;
+    const currentFilter = data[_currentFilterKey];
+    console.log('[SC] storage read: autoApplyOnLoad=', autoApplyOnLoad, 'filter=', currentFilter, 'key=', _currentFilterKey);
+    if (autoApplyOnLoad && currentFilter) {
+      debugLog('Restoring filter on page load:', currentFilter);
+      waitForSprintsAndFilter(currentFilter);
     }
+    // else: clearFilterIcon already sent above — nothing more to do
   });
 
   // Listen for debug mode changes
@@ -325,8 +339,16 @@ function getSprintState() {
 // Waits for sprint toggle buttons to appear in the DOM, then applies the filter.
 // Used on page load/refresh when Jira's SPA hasn't rendered sprints yet.
 function waitForSprintsAndFilter(filterText) {
+  console.log('[SC] waitForSprintsAndFilter called, filter=', filterText);
   const applyAndRefresh = () => {
-    filterSprints(filterText);
+    console.log('[SC] applyAndRefresh: buttons found=', findSprintToggleButtons().length);
+    const result = filterSprints(filterText);
+    console.log('[SC] filterSprints result=', result);
+    // Notify the background to show the filter badge. Guarded for the test environment
+    // where chrome is not defined.
+    if (typeof chrome !== 'undefined' && chrome.runtime) {
+      chrome.runtime.sendMessage({ action: 'setFilterIcon' });
+    }
     // Jira mounts card virtual lists asynchronously after sprint buttons appear.
     // Retry the scroll nudge at increasing intervals so at least one fires after
     // those IntersectionObservers are set up.
@@ -335,13 +357,16 @@ function waitForSprintsAndFilter(filterText) {
     setTimeout(() => triggerVirtualListRefresh(), 1500);
   };
 
-  if (findSprintToggleButtons().length > 0) {
+  const initialCount = findSprintToggleButtons().length;
+  console.log('[SC] initial button count=', initialCount);
+  if (initialCount > 0) {
     applyAndRefresh();
     return;
   }
 
   const observer = new MutationObserver(() => {
     if (findSprintToggleButtons().length > 0) {
+      console.log('[SC] observer fired, buttons found');
       observer.disconnect();
       applyAndRefresh();
     }
@@ -349,12 +374,60 @@ function waitForSprintsAndFilter(filterText) {
 
   observer.observe(document.body, { childList: true, subtree: true });
   // Safety valve: don't observe indefinitely if the page never renders sprints
-  setTimeout(() => observer.disconnect(), 15000);
+  setTimeout(() => { console.log('[SC] observer timeout'); observer.disconnect(); }, 15000);
 }
 
 // Listen for messages from the popup
 if (typeof chrome !== 'undefined' && chrome.runtime && !window.__sprintCollapserListening) {
   window.__sprintCollapserListening = true;
+
+  // Poll window.location.href to detect SPA navigation.
+  // Patching history.pushState in a content script only affects the isolated world —
+  // it does NOT intercept calls made by the page's own JavaScript (e.g. Jira's router).
+  // Polling is therefore the only reliable approach without requiring the `tabs` permission.
+  const BACKLOG_PATTERNS = [
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/c\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/projects\/[^/]+\/boards\/[^/]+\/backlog/,
+    /^https:\/\/[^/]+\.atlassian\.net\/jira\/software\/[^/]+\/backlog/,
+  ];
+
+  let _pollPrevUrl = window.location.href;
+  const _pollInterval = setInterval(() => {
+    // Stop polling if the extension has been reloaded/updated — Chrome API calls on an
+    // invalidated context throw "Extension context invalidated" errors.
+    if (!chrome.runtime?.id) {
+      clearInterval(_pollInterval);
+      return;
+    }
+    const currentUrl = window.location.href;
+    if (currentUrl === _pollPrevUrl) return;
+    const wasBacklog = BACKLOG_PATTERNS.some(p => p.test(_pollPrevUrl));
+    const isBacklog  = BACKLOG_PATTERNS.some(p => p.test(currentUrl));
+    _pollPrevUrl = currentUrl;
+
+    if (wasBacklog && !isBacklog) {
+      // Left the backlog — grey out the icon.
+      chrome.runtime.sendMessage({ action: 'setGreyIcon' });
+    } else if (!wasBacklog && isBacklog) {
+      // Arrived at the backlog via SPA navigation — re-apply stored filter if enabled.
+      const normalized = window.location.origin + window.location.pathname.replace(/\/$/, '');
+      const currentFilterKey = `currentFilter_${normalized}`;
+      chrome.storage.local.get([currentFilterKey, 'autoApplyOnLoad'], (data) => {
+        // Re-check: context may have been invalidated while the storage read was in flight.
+        if (!chrome.runtime?.id) return;
+        const autoApplyOnLoad = data.autoApplyOnLoad !== undefined ? data.autoApplyOnLoad : true;
+        const currentFilter = data[currentFilterKey];
+        if (autoApplyOnLoad && currentFilter) {
+          debugLog('Re-applying filter after SPA navigation to backlog:', currentFilter);
+          waitForSprintsAndFilter(currentFilter);
+        } else {
+          // No filter to apply — ensure the badge is cleared.
+          chrome.runtime.sendMessage({ action: 'clearFilterIcon' });
+        }
+      });
+    }
+  }, 500);
+
   // Actions that call sendResponse asynchronously — listener must return true for these
   // to keep the message channel open.
   const asyncActions = new Set(['collapseAllSprints', 'expandAllSprints']);
@@ -374,8 +447,6 @@ if (typeof chrome !== 'undefined' && chrome.runtime && !window.__sprintCollapser
       sendResponse(state);
     },
   };
-
-  
 
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     debugLog('Received message:', request.action);

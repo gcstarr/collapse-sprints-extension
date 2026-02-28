@@ -2,6 +2,8 @@
 const SAVED_FILTERS_KEY = 'savedFilters';
 const CURRENT_FILTER_KEY = 'currentFilter';
 const DEBUG_MODE_KEY = 'debugMode';
+const AUTO_APPLY_KEY = 'autoApplyFilter';
+const AUTO_APPLY_ON_LOAD_KEY = 'autoApplyOnLoad';
 const MAX_SAVED_FILTERS = 10;
 
 // Debug logging helper
@@ -10,6 +12,11 @@ let debugModeEnabled = false;
 // In-memory caches to avoid repeated storage reads
 let cachedSavedFilters = [];
 let cachedCurrentFilter = '';
+let cachedAutoApply = true;
+let cachedAutoApplyOnLoad = true;
+// URL and tab ID of the active Jira backlog tab — set once checkSupportedPage confirms a valid URL.
+// Storage keys are scoped to this URL so different backlogs have independent favorites.
+let currentTabUrl = '';
 
 async function loadDebugMode() {
   const data = await chrome.storage.local.get(DEBUG_MODE_KEY);
@@ -42,6 +49,29 @@ function debugLog(...args) {
   }
 }
 
+function setFilterIcon(tabId) {
+  chrome.runtime.sendMessage({ action: 'setFilterIcon', tabId });
+}
+
+function clearFilterIcon(tabId) {
+  chrome.runtime.sendMessage({ action: 'clearFilterIcon', tabId });
+}
+
+// Returns storage keys scoped to the active backlog URL so different boards
+// have independent saved-filter lists. Falls back to global keys when no URL
+// is set (e.g. during unit tests that call filter functions directly).
+function getStorageKeys() {
+  if (!currentTabUrl) {
+    return { savedFilters: SAVED_FILTERS_KEY, currentFilter: CURRENT_FILTER_KEY };
+  }
+  const url = new URL(currentTabUrl);
+  const normalized = url.origin + url.pathname.replace(/\/$/, '');
+  return {
+    savedFilters: `${SAVED_FILTERS_KEY}_${normalized}`,
+    currentFilter: `${CURRENT_FILTER_KEY}_${normalized}`,
+  };
+}
+
 // Returns the active tab, or null if none found
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -59,9 +89,14 @@ function setButtonLoading(btn, text) {
 
 // Initializes both saved-filter list and current filter state with a single storage read
 async function initializeFilterState() {
-  const data = await chrome.storage.local.get([SAVED_FILTERS_KEY, CURRENT_FILTER_KEY]);
-  cachedSavedFilters = data[SAVED_FILTERS_KEY] || [];
-  cachedCurrentFilter = data[CURRENT_FILTER_KEY] || '';
+  const { savedFilters: savedFiltersKey, currentFilter: currentFilterKey } = getStorageKeys();
+  const data = await chrome.storage.local.get([savedFiltersKey, currentFilterKey, AUTO_APPLY_KEY, AUTO_APPLY_ON_LOAD_KEY]);
+  cachedSavedFilters = data[savedFiltersKey] || [];
+  cachedCurrentFilter = data[currentFilterKey] || '';
+  cachedAutoApply = data[AUTO_APPLY_KEY] !== undefined ? data[AUTO_APPLY_KEY] : true;
+  cachedAutoApplyOnLoad = data[AUTO_APPLY_ON_LOAD_KEY] !== undefined ? data[AUTO_APPLY_ON_LOAD_KEY] : true;
+  document.getElementById('autoApplyToggle').checked = cachedAutoApply;
+  document.getElementById('autoApplyOnLoadToggle').checked = cachedAutoApplyOnLoad;
   displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
 
   if (cachedCurrentFilter) {
@@ -69,7 +104,13 @@ async function initializeFilterState() {
     // Custom filter text should remain editable on re-open.
     const isSavedFilter = cachedSavedFilters.includes(cachedCurrentFilter);
     document.getElementById('filterInput').disabled = isSavedFilter;
-    applyFilterDirect(cachedCurrentFilter);
+    if (cachedAutoApply) {
+      applyFilterDirect(cachedCurrentFilter);
+    } else {
+      // Restore the filter text so the user can see and manually apply it.
+      document.getElementById('filterInput').value = cachedCurrentFilter;
+      updateSaveButtonState();
+    }
   } else {
     document.getElementById('filterInput').value = '';
     document.getElementById('filterInput').disabled = false;
@@ -105,9 +146,9 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
     const removeBtn = document.createElement('button');
     removeBtn.className = 'filter-chip-remove';
     removeBtn.textContent = '×';
-    removeBtn.addEventListener('click', (e) => {
+    removeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (confirm(`Delete filter "${filter}"?`)) {
+      if (await showConfirm(`Delete filter "${filter}"?`, 'Delete')) {
         removeSavedFilter(filter);
       }
     });
@@ -122,7 +163,7 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
       if (isSelected) {
         // Deselect: clear filter and enable input
         cachedCurrentFilter = '';
-        await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
+        await chrome.storage.local.set({ [getStorageKeys().currentFilter]: '' });
         document.getElementById('filterInput').value = '';
         document.getElementById('filterInput').disabled = false;
 
@@ -137,7 +178,7 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
       } else {
         // Select: apply filter and disable input
         cachedCurrentFilter = filter;
-        await chrome.storage.local.set({ [CURRENT_FILTER_KEY]: filter });
+        await chrome.storage.local.set({ [getStorageKeys().currentFilter]: filter });
         document.getElementById('filterInput').value = filter;
         document.getElementById('filterInput').disabled = true;
 
@@ -158,12 +199,13 @@ function displaySavedFilters(savedFilters, currentFilter = '') {
 
 async function removeSavedFilter(filterText) {
   cachedSavedFilters = cachedSavedFilters.filter((f) => f !== filterText).sort();
-  const updates = { [SAVED_FILTERS_KEY]: cachedSavedFilters };
+  const { savedFilters: savedFiltersKey, currentFilter: currentFilterKey } = getStorageKeys();
+  const updates = { [savedFiltersKey]: cachedSavedFilters };
   let wasActive = false;
   if (cachedCurrentFilter === filterText) {
     wasActive = true;
     cachedCurrentFilter = '';
-    updates[CURRENT_FILTER_KEY] = '';
+    updates[currentFilterKey] = '';
     document.getElementById('filterInput').value = '';
     document.getElementById('filterInput').disabled = false;
   }
@@ -186,6 +228,7 @@ async function saveFilter(filterText) {
     return;
   }
 
+  const { savedFilters: savedFiltersKey, currentFilter: currentFilterKey } = getStorageKeys();
   const storageUpdates = {};
   let wasActive = false;
 
@@ -195,7 +238,7 @@ async function saveFilter(filterText) {
     if (cachedCurrentFilter === filterText) {
       wasActive = true;
       cachedCurrentFilter = '';
-      storageUpdates[CURRENT_FILTER_KEY] = '';
+      storageUpdates[currentFilterKey] = '';
       document.getElementById('filterInput').value = '';
       document.getElementById('filterInput').disabled = false;
     }
@@ -211,7 +254,7 @@ async function saveFilter(filterText) {
   // Sort alphabetically before saving
   cachedSavedFilters.sort();
 
-  storageUpdates[SAVED_FILTERS_KEY] = cachedSavedFilters;
+  storageUpdates[savedFiltersKey] = cachedSavedFilters;
   await chrome.storage.local.set(storageUpdates);
   displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
   updateSaveButtonState();
@@ -249,6 +292,32 @@ function updateSaveButtonState() {
     saveBtn.classList.add('pulsing');
     saveBtn.textContent = '☆';
   }
+}
+
+function showConfirm(message, confirmLabel = 'OK') {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('confirmOverlay');
+    const msgEl = document.getElementById('confirmMessage');
+    const okBtn = document.getElementById('confirmOkBtn');
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+
+    msgEl.textContent = message;
+    okBtn.textContent = confirmLabel;
+    overlay.style.display = 'flex';
+
+    function cleanup(result) {
+      overlay.style.display = 'none';
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+  });
 }
 
 function applyFilterDirect(filterText) {
@@ -350,6 +419,13 @@ async function updateActionButtonStates(tabIdOrCallback, callback) {
       // Disable Expand All if all already expanded
       document.getElementById('expandBtn').disabled = response.allExpanded;
 
+      // Sync toolbar icon with actual filter state on the page
+      if (response.anyFiltered) {
+        setFilterIcon(tabId);
+      } else {
+        clearFilterIcon(tabId);
+      }
+
       if (cb) cb();
     }
   );
@@ -435,6 +511,7 @@ function checkSupportedPage(retries = 5, delay = 200) {
           setTimeout(() => attemptCheck(retriesLeft - 1), delay);
         } else {
           disableAllControls(true);
+          clearFilterIcon(tab.id);
           statusDiv.textContent = 'This extension only works on Jira Cloud board backlog pages. Please navigate to a Jira Cloud board backlog.';
           statusDiv.className = 'status-message error';
           statusDiv.style.marginTop = '16px';
@@ -444,6 +521,7 @@ function checkSupportedPage(retries = 5, delay = 200) {
 
       // URL is supported, try to reach the content script
       debugLog('URL is supported, attempting to reach content script');
+      currentTabUrl = tab.url;
       chrome.tabs.sendMessage(
         tab.id,
         { action: 'checkPageSupport' },
@@ -526,14 +604,14 @@ async function applyFilter() {
     if (response) {
       updateStatus(response.message, response.success);
 
-      // Always persist the active filter text so it's restored when the popup reopens.
-      // Chip selection is determined by whether the text matches a saved filter — no
-      // separate flag needed.
-      if (!cachedSavedFilters.includes(filterText)) {
-        cachedCurrentFilter = filterText;
-        chrome.storage.local.set({ [CURRENT_FILTER_KEY]: filterText });
+      // Always persist the active filter so it's restored when the popup reopens.
+      cachedCurrentFilter = filterText;
+      chrome.storage.local.set({ [getStorageKeys().currentFilter]: filterText });
+
+      // If the applied text matches a saved filter, lock the input like a chip click does.
+      if (cachedSavedFilters.includes(filterText)) {
+        document.getElementById('filterInput').disabled = true;
       }
-      // If it IS a saved filter, CURRENT_FILTER_KEY was already set when the chip was clicked
       displaySavedFilters(cachedSavedFilters, cachedCurrentFilter);
     } else {
       updateStatus('Failed to filter sprints', false);
@@ -631,7 +709,7 @@ function init() {
 
     if (isSaved) {
       // Only show confirmation when removing
-      if (confirm(`Remove "${filterText}" from saved filters?`)) {
+      if (await showConfirm(`Remove "${filterText}" from saved filters?`, 'Remove')) {
         saveFilter(filterText);
       }
     } else {
@@ -679,7 +757,7 @@ function init() {
         document.getElementById('filterInput').value = '';
         document.getElementById('filterInput').disabled = false;
         cachedCurrentFilter = '';
-        chrome.storage.local.set({ [CURRENT_FILTER_KEY]: '' });
+        chrome.storage.local.set({ [getStorageKeys().currentFilter]: '' });
         updateSaveButtonState();
 
         // Refresh saved filters display to remove selected state
@@ -691,6 +769,32 @@ function init() {
       // Update button states after action completes
       updateActionButtonStates(tab.id);
     });
+  });
+
+  document.getElementById('settingsBtn').addEventListener('click', () => {
+    const mainContent = document.getElementById('mainContent');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingsBtn = document.getElementById('settingsBtn');
+    const isShowingSettings = settingsPanel.style.display !== 'none';
+    if (isShowingSettings) {
+      mainContent.style.display = '';
+      settingsPanel.style.display = 'none';
+      settingsBtn.classList.remove('active');
+    } else {
+      mainContent.style.display = 'none';
+      settingsPanel.style.display = 'block';
+      settingsBtn.classList.add('active');
+    }
+  });
+
+  document.getElementById('autoApplyToggle').addEventListener('change', async (e) => {
+    cachedAutoApply = e.target.checked;
+    await chrome.storage.local.set({ [AUTO_APPLY_KEY]: cachedAutoApply });
+  });
+
+  document.getElementById('autoApplyOnLoadToggle').addEventListener('change', async (e) => {
+    cachedAutoApplyOnLoad = e.target.checked;
+    await chrome.storage.local.set({ [AUTO_APPLY_ON_LOAD_KEY]: cachedAutoApplyOnLoad });
   });
 
   // Add triple-click handler to title for debug toggle
